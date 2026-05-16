@@ -852,13 +852,18 @@ fn stateful_check(cwd: &str, tool_name: &str, tool_input: &serde_json::Value) ->
     }
 }
 
-/// Look up a stateful rule by its `stateful` field value; default-enabled if no
-/// entry is present (backwards compatibility with installs predating the field).
+/// Look up a stateful rule by its `stateful` field value.
+///
+/// Returns `false` when `.hoangsa/rules.json` is absent or unreadable — a
+/// project without rules.json is treated as "stateful enforcement opted out"
+/// so a fresh / uninitialised project never gets warns or blocks from
+/// hoangsa hooks. When rules.json is present but doesn't list this stateful
+/// id, default to enabled (back-compat with installs predating the field).
 fn stateful_rule_enabled(cwd: &str, stateful_id: &str) -> bool {
     use crate::cmd::rule::read_rules_config_pub;
     let config = match read_rules_config_pub(cwd) {
         Ok(Some(c)) => c,
-        _ => return true,
+        _ => return false,
     };
     for rule in &config.rules {
         if rule.stateful.as_deref() == Some(stateful_id) {
@@ -1514,6 +1519,15 @@ fn find_symbol_in_tree(
 }
 
 fn append_event(cwd: &str, event: &serde_json::Value) {
+    // Don't materialise `.hoangsa/state/` in projects that haven't been
+    // initialised — otherwise running Claude (or any hook-fired Bash) in
+    // a non-hoangsa directory leaves a stray `.hoangsa/` behind. The
+    // walk-up in `resolve_cwd` makes this the project root when init'd,
+    // so this check both gates the no-init case and prevents stray dirs
+    // in subfolders.
+    if !is_hoangsa_project(cwd) {
+        return;
+    }
     let events_path = enforcement_events_path(cwd);
     if let Some(parent) = events_path.parent() {
         let _ = fs::create_dir_all(parent);
@@ -1659,6 +1673,16 @@ fn enforcement_events_path(cwd: &str) -> std::path::PathBuf {
         .join(".hoangsa")
         .join("state")
         .join("enforcement.events")
+}
+
+/// True when `<cwd>/.hoangsa/config.json` exists — our marker that the
+/// project has been through `/hoangsa:init` and is opting into hoangsa
+/// state writes.
+fn is_hoangsa_project(cwd: &str) -> bool {
+    Path::new(cwd)
+        .join(".hoangsa")
+        .join("config.json")
+        .is_file()
 }
 
 /// `hook state-record`
@@ -2211,6 +2235,31 @@ mod tests {
             p.to_string_lossy(),
             "/tmp/project/.hoangsa/state/enforcement.events"
         );
+    }
+
+    #[test]
+    fn append_event_skips_uninitialised_project() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cwd = tmp.path().to_str().unwrap();
+        // No .hoangsa/config.json → uninitialised.
+        append_event(cwd, &json!({"event": "test"}));
+        assert!(
+            !tmp.path().join(".hoangsa").exists(),
+            "uninitialised project must not get a stray .hoangsa/ dir"
+        );
+    }
+
+    #[test]
+    fn append_event_writes_when_project_initialised() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cwd = tmp.path();
+        fs::create_dir_all(cwd.join(".hoangsa")).unwrap();
+        fs::write(cwd.join(".hoangsa/config.json"), "{}").unwrap();
+
+        append_event(cwd.to_str().unwrap(), &json!({"event": "test"}));
+        let events = fs::read_to_string(enforcement_events_path(cwd.to_str().unwrap()))
+            .expect("events file should exist for init'd project");
+        assert!(events.contains("\"event\":\"test\""));
     }
 
     // ── reflect prompt ──────────────────────────────────────────────────────
