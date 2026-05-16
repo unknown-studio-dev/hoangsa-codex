@@ -3,11 +3,16 @@ name = "hoangsa-cli"
 version = "0.2.4"
 edition = "2024"
 
+[lib]
+name = "hoangsa_cli"
+path = "src/lib.rs"
+
 [features]
 default = []
 media = ["dep:ab_glyph", "dep:image", "dep:imageproc", "dep:walkdir"]
 
 [dependencies]
+hoangsa-memory-core = { workspace = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 time = { version = "0.3", features = ["formatting", "macros"] }

@@ -14,6 +14,7 @@ members = [
     "crates/hoangsa-memory",
     "crates/hoangsa-memory-mcp",
     "crates/hoangsa-proxy",
+    "crates/hoangsa-ui-server",
 ]
 
 [workspace.package]
@@ -64,6 +65,10 @@ redb         = "4.0.0"
 tantivy      = "0.26.0"
 rusqlite     = { version = "0.39.0", features = ["bundled"] }
 
+# Concurrency / FS notifications
+dashmap      = "6"
+notify       = "6.1"
+
 # Embeddings (replaces Python ChromaDB sidecar).
 # `fastembed` runs ONNX in-process via `ort`; we pin to the multilingual
 # model family so Vietnamese retrieval quality matches English. Defaults
@@ -80,6 +85,13 @@ reqwest      = { version = "0.12", default-features = false, features = ["json",
 
 # Dev
 tempfile     = "3.13"
+
+# Global allocator for the daemon. jemalloc's per-arena decay returns
+# freed pages to the OS within ~10 s by default, which keeps RSS honest
+# after the embedder is evicted (libmalloc / glibc ptmalloc otherwise
+# hoard fragmented arenas for the process lifetime). Skipped on MSVC —
+# the crate doesn't build there. See `crates/hoangsa-memory/src/main.rs`.
+tikv-jemallocator = { version = "0.6" }
 
 [profile.release]
 opt-level     = 3

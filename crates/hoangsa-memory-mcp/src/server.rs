@@ -5,6 +5,7 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicI64, Ordering};
 
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -17,7 +18,7 @@ use hoangsa_memory_policy::{
 };
 use hoangsa_memory_parse::LanguageRegistry;
 use hoangsa_memory_retrieve::{Indexer, RetrieveConfig, Retriever, VectorStoreConfig};
-use hoangsa_memory_store::{EmbeddedVectorStore, StoreRoot, VectorCol, VectorStore};
+use hoangsa_memory_store::{EmbeddedVectorStore, SharedEmbedder, StoreRoot, VectorCol, VectorStore};
 use time::OffsetDateTime;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tracing::{debug, warn};
@@ -46,22 +47,69 @@ pub struct Server {
     pub(crate) inner: Arc<Inner>,
 }
 
+/// Heavy per-project resources that get evicted after idle. Phase 5 of the
+/// project-isolation work: in the multi-project daemon a project that hasn't
+/// served a request in 30 minutes drops its tantivy reader, sqlite pool, and
+/// redb handle to claw back ~10-50 MB RAM; the next request rehydrates the
+/// bundle transparently via [`Server::resources`].
+pub(crate) struct ResourceBundle {
+    pub(crate) store: StoreRoot,
+    pub(crate) indexer: Indexer,
+    pub(crate) retriever: Retriever,
+    pub(crate) graph: hoangsa_memory_graph::Graph,
+}
+
+impl ResourceBundle {
+    async fn open(root: &Path) -> anyhow::Result<Self> {
+        let store = StoreRoot::open(root).await?;
+        let retrieve_cfg = RetrieveConfig::load_or_default(root).await;
+        let indexer = Indexer::new(store.clone(), LanguageRegistry::new());
+        let retriever =
+            Retriever::new(store.clone()).with_markdown_boost(retrieve_cfg.rerank_markdown_boost);
+        let graph = hoangsa_memory_graph::Graph::new(store.kv.clone());
+        Ok(Self {
+            store,
+            indexer,
+            retriever,
+            graph,
+        })
+    }
+}
+
 pub(crate) struct Inner {
     pub(crate) root: PathBuf,
-    store: StoreRoot,
-    indexer: Indexer,
-    retriever: Retriever,
-    graph: hoangsa_memory_graph::Graph,
-    /// Lazy handle to the in-process vector store. Holds the ONNX
-    /// embedder + SQLite BLOB connection, both of which are expensive
-    /// to initialise, so we only pay for them on the first tool call
-    /// that actually needs embeddings.
-    vector_store: tokio::sync::OnceCell<Option<EmbeddedVectorStore>>,
+    /// Heavy backends (tantivy / redb / episodes sqlite). Lazily
+    /// (re-)opened by [`Server::resources`]; dropped by
+    /// [`Server::evict_resources`] when the project has been idle long
+    /// enough to be worth the rehydrate cost on the next request.
+    pub(crate) bundle: tokio::sync::RwLock<Option<Arc<ResourceBundle>>>,
+    /// Unix-seconds timestamp of the last [`Server::resources`] call.
+    /// Used by the daemon's eviction loop to decide when a project is
+    /// "idle enough" to drop its bundle. Read/written via `Relaxed` —
+    /// the eviction loop tolerates a few seconds of skew.
+    last_access: AtomicI64,
+    /// Lazy handle to the in-process vector store. Holds the SQLite
+    /// connection (page cache + prepared-statement cache, ~hundreds of
+    /// KB per project) plus a clone of `vector_store_embedder` (cheap —
+    /// the embedder loads lazily on first use).
+    ///
+    /// Cleared alongside the bundle in [`Server::evict_resources`]: an
+    /// idle project must not keep its SQLite handle resident, so the
+    /// slot needs to be takeable. `None` = uninit or evicted, `Some(_)`
+    /// = warm. Init failures aren't sticky — the next call retries, so
+    /// a transient cause (filesystem hiccup) can clear on its own.
+    vector_store: tokio::sync::RwLock<Option<EmbeddedVectorStore>>,
     /// Mirror of `[vector_store] enabled` at server-open time. When
     /// false, `get_vector_store` short-circuits without even trying to
     /// init — useful on machines where fastembed's model download
     /// would time out.
     vector_store_enabled: bool,
+    /// Shared fastembed handle. In `Server::open` this is a fresh
+    /// instance unique to this server; in
+    /// `Server::open_with_embedder` (used by the multi-project MCP
+    /// daemon) every per-project Server holds a clone of one Arc so
+    /// the ~150 MB ONNX model is allocated once across all projects.
+    vector_store_embedder: Arc<SharedEmbedder>,
     /// Serialises `memory_index` calls against each other. Two
     /// concurrent tool_index invocations on the same store would
     /// double-parse and double-embed identical chunks (idempotent via
@@ -70,6 +118,13 @@ pub(crate) struct Inner {
     /// it finishes quickly. Doesn't block `memory_recall` or other
     /// read-side tools.
     index_mutex: tokio::sync::Mutex<()>,
+    /// Abort handle for the per-project background file watcher.
+    /// Populated by [`Server::spawn_watcher`] on success; consumed by
+    /// [`Server::abort_watcher`] when the project is unregistered so
+    /// the watcher's `Arc<Inner>` clone goes away and the bundle can
+    /// drop. A `std::sync::Mutex` is fine — the handle is touched only
+    /// at start/stop and the work is never `.await`-suspended.
+    watcher: std::sync::Mutex<Option<tokio::task::JoinHandle<()>>>,
 }
 
 impl Server {
@@ -79,61 +134,171 @@ impl Server {
     /// initialized on first use to avoid the ~130 MB RSS hit when no
     /// vector operation is needed.
     pub async fn open(path: impl AsRef<Path>) -> anyhow::Result<Self> {
+        Self::open_with_embedder(path, SharedEmbedder::new()).await
+    }
+
+    /// Like [`Self::open`] but reuses an externally-owned shared
+    /// embedder. The multi-project MCP daemon (`ServiceState`) holds
+    /// one [`SharedEmbedder`] for the lifetime of the process and
+    /// passes a clone into every per-project Server it opens, so the
+    /// ONNX model is allocated once across N projects instead of N
+    /// times.
+    pub async fn open_with_embedder(
+        path: impl AsRef<Path>,
+        embedder: Arc<SharedEmbedder>,
+    ) -> anyhow::Result<Self> {
         let root = path.as_ref().to_path_buf();
-        let store = StoreRoot::open(&root).await?;
-        let retrieve_cfg = RetrieveConfig::load_or_default(&root).await;
+        let bundle = ResourceBundle::open(&root).await?;
         let vector_store_enabled = Self::is_vector_store_enabled(&root).await;
 
-        let indexer = Indexer::new(store.clone(), LanguageRegistry::new());
-        let retriever =
-            Retriever::new(store.clone()).with_markdown_boost(retrieve_cfg.rerank_markdown_boost);
-
-        let graph = hoangsa_memory_graph::Graph::new(store.kv.clone());
         Ok(Self {
             inner: Arc::new(Inner {
                 root,
-                store,
-                indexer,
-                retriever,
-                graph,
-                vector_store: tokio::sync::OnceCell::new(),
+                bundle: tokio::sync::RwLock::new(Some(Arc::new(bundle))),
+                last_access: AtomicI64::new(now_unix()),
+                vector_store: tokio::sync::RwLock::new(None),
                 vector_store_enabled,
+                vector_store_embedder: embedder,
                 index_mutex: tokio::sync::Mutex::new(()),
+                watcher: std::sync::Mutex::new(None),
             }),
         })
+    }
+
+    /// Read-only accessor for the shared embedder. Used by the
+    /// multi-project daemon's tests to assert that every per-project
+    /// Server holds the same Arc.
+    #[doc(hidden)]
+    pub fn shared_embedder(&self) -> &Arc<SharedEmbedder> {
+        &self.inner.vector_store_embedder
+    }
+
+    /// Borrow (rehydrating if needed) the heavy backend bundle.
+    ///
+    /// In the multi-project daemon the bundle may have been dropped by
+    /// [`Self::evict_resources`] after a long idle window — the first
+    /// call after eviction reopens tantivy/redb/episodes (≈100-200 ms).
+    /// In single-project mode the bundle is built eagerly at
+    /// [`Self::open_with_embedder`] time, so this is just a refcount
+    /// bump on the cached `Arc`.
+    ///
+    /// Every call refreshes `last_access` so the eviction loop's
+    /// idleness check is grounded in actual tool traffic.
+    pub(crate) async fn resources(&self) -> anyhow::Result<Arc<ResourceBundle>> {
+        self.inner
+            .last_access
+            .store(now_unix(), Ordering::Relaxed);
+        if let Some(b) = self.inner.bundle.read().await.as_ref() {
+            return Ok(b.clone());
+        }
+        // Slow path: take the write lock and double-check — a concurrent
+        // caller may have populated the slot between our read and write.
+        let mut w = self.inner.bundle.write().await;
+        if let Some(b) = w.as_ref() {
+            return Ok(b.clone());
+        }
+        let bundle = Arc::new(ResourceBundle::open(&self.inner.root).await?);
+        tracing::info!(
+            root = %self.inner.root.display(),
+            "project resources rehydrated after idle eviction"
+        );
+        *w = Some(bundle.clone());
+        Ok(bundle)
+    }
+
+    /// Borrow the bundle **only if it is currently warm** — never
+    /// rehydrate. Used by background tasks that should not defeat
+    /// Phase-5 eviction by triggering an expensive reopen on their own
+    /// schedule (the file watcher is the canonical case: fs activity
+    /// keeps firing even when no user is actively touching the project,
+    /// and using [`Self::resources`] there would rebuild tantivy + redb
+    /// + episodes every few seconds).
+    ///
+    /// Does **not** refresh `last_access` — the caller's traffic is by
+    /// definition not user-driven.
+    pub(crate) async fn resources_if_warm(&self) -> Option<Arc<ResourceBundle>> {
+        self.inner.bundle.read().await.as_ref().cloned()
+    }
+
+    /// Drop the heavy backend bundle **and** the lazily-opened vector
+    /// store. The cached `Arc<Server>` and the shared embedder Arc stay
+    /// live; the next [`Self::resources`] / [`Self::get_vector_store`]
+    /// call rebuilds them.
+    ///
+    /// Returns `true` if anything was actually dropped, `false` if both
+    /// slots were already empty.
+    pub async fn evict_resources(&self) -> bool {
+        let mut bundle = self.inner.bundle.write().await;
+        let mut vector = self.inner.vector_store.write().await;
+        // Bitwise `|` (not `||`) so we always take both slots — `||`
+        // would short-circuit and leak the vector store when the
+        // bundle was the first to clear.
+        let dropped = bundle.take().is_some() | vector.take().is_some();
+        if dropped {
+            tracing::info!(
+                root = %self.inner.root.display(),
+                "project resources evicted (idle)"
+            );
+        }
+        dropped
+    }
+
+    /// Unix-seconds timestamp of the most recent [`Self::resources`]
+    /// call. Used by the daemon eviction loop.
+    pub fn last_access_unix(&self) -> i64 {
+        self.inner.last_access.load(Ordering::Relaxed)
+    }
+
+    /// True when [`Self::resources_if_warm`] would return `Some`. For
+    /// tests asserting eviction behaviour without poking the private
+    /// slot.
+    #[doc(hidden)]
+    pub async fn bundle_is_warm(&self) -> bool {
+        self.inner.bundle.read().await.is_some()
+    }
+
+    /// True when the lazy vector store has been opened and not yet
+    /// evicted. Test-only accessor.
+    #[doc(hidden)]
+    pub async fn vector_store_is_warm(&self) -> bool {
+        self.inner.vector_store.read().await.is_some()
     }
 
     async fn is_vector_store_enabled(root: &Path) -> bool {
         VectorStoreConfig::load_or_default(root).await.enabled
     }
 
-    async fn get_vector_store(&self) -> Option<&EmbeddedVectorStore> {
+    pub(crate) async fn get_vector_store(&self) -> Option<EmbeddedVectorStore> {
         if !self.inner.vector_store_enabled {
             return None;
         }
-        let root = self.inner.root.clone();
-        let store = self
-            .inner
-            .vector_store
-            .get_or_init(|| async {
-                let cfg = VectorStoreConfig::load_or_default(&root).await;
-                let path = cfg
-                    .data_path
-                    .map(PathBuf::from)
-                    .unwrap_or_else(|| StoreRoot::vectors_path(&root));
-                match EmbeddedVectorStore::open(&path).await {
-                    Ok(s) => {
-                        tracing::info!(path = %path.display(), "embedded vector store opened (lazy init)");
-                        Some(s)
-                    }
-                    Err(e) => {
-                        tracing::warn!(error = %e, "embedded vector store init failed");
-                        None
-                    }
-                }
-            })
-            .await;
-        store.as_ref()
+        // Fast path: already warm.
+        if let Some(s) = self.inner.vector_store.read().await.as_ref() {
+            return Some(s.clone());
+        }
+        // Slow path: take the write lock and double-check — a concurrent
+        // caller may have populated the slot between our read and write.
+        let mut w = self.inner.vector_store.write().await;
+        if let Some(s) = w.as_ref() {
+            return Some(s.clone());
+        }
+        let cfg = VectorStoreConfig::load_or_default(&self.inner.root).await;
+        let path = cfg
+            .data_path
+            .map(PathBuf::from)
+            .unwrap_or_else(|| StoreRoot::vectors_path(&self.inner.root));
+        let embedder = self.inner.vector_store_embedder.clone();
+        match EmbeddedVectorStore::open_with_embedder(&path, embedder).await {
+            Ok(s) => {
+                tracing::info!(path = %path.display(), "embedded vector store opened (lazy init)");
+                *w = Some(s.clone());
+                Some(s)
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "embedded vector store init failed");
+                None
+            }
+        }
     }
 
     /// Spawn a background file watcher if `[watch] enabled = true` in
@@ -149,13 +314,39 @@ impl Server {
             return false;
         }
         let debounce = std::time::Duration::from_millis(cfg.debounce_ms);
-        let inner = Arc::clone(&self.inner);
-        tokio::spawn(async move {
-            if let Err(e) = run_watcher(inner, src, debounce).await {
+        let server = self.clone();
+        let handle = tokio::spawn(async move {
+            if let Err(e) = run_watcher(server, src, debounce).await {
                 warn!(error = %e, "background watcher exited");
             }
         });
+        let mut slot = self
+            .inner
+            .watcher
+            .lock()
+            .expect("watcher handle slot poisoned");
+        // Replace any previous handle (caller spawning a fresh watcher
+        // for the same project means the previous one is conceptually
+        // dead — abort it so we don't leak two clones of `Server`).
+        if let Some(prev) = slot.replace(handle) {
+            prev.abort();
+        }
         true
+    }
+
+    /// Abort the background watcher task spawned by
+    /// [`Self::spawn_watcher`], if one is running. The watcher holds a
+    /// clone of this `Server`, so aborting it lets the project's `Arc`
+    /// graph drop when [`ServiceState::unregister`] removes the slot.
+    pub fn abort_watcher(&self) {
+        let mut slot = self
+            .inner
+            .watcher
+            .lock()
+            .expect("watcher handle slot poisoned");
+        if let Some(handle) = slot.take() {
+            handle.abort();
+        }
     }
 
     /// Dispatch a single request. Returns `Ok(None)` for notifications.
@@ -410,7 +601,7 @@ impl Server {
         let include_archive = scope_str == "archive" || scope_str == "all";
 
         let mut out = if include_curated {
-            self.inner.retriever.recall(&q).await?
+            self.resources().await?.retriever.recall(&q).await?
         } else {
             hoangsa_memory_core::Retrieval {
                 chunks: Vec::new(),
@@ -490,7 +681,7 @@ impl Server {
                 text: query,
                 at: OffsetDateTime::now_utc(),
             };
-            if let Err(e) = self.inner.store.episodes.append(&ev).await {
+            if let Err(e) = self.resources().await?.store.episodes.append(&ev).await {
                 warn!(error = %e, "failed to log QueryIssued event");
             }
         }
@@ -534,23 +725,23 @@ impl Server {
         // Serialise concurrent index calls — see `Inner::index_mutex`.
         // Released at the end of this function when `_index_guard` drops.
         let _index_guard = self.inner.index_mutex.lock().await;
+        let res = self.resources().await?;
         // Wire the code-chunk vector collection if available, so this
-        // run actually embeds chunks. The stored `self.inner.indexer`
-        // is kept vector-less so server startup doesn't pay the
-        // embedder init cost up front; we upgrade per-index here on
-        // demand.
+        // run actually embeds chunks. The cached `res.indexer` is kept
+        // vector-less so server startup doesn't pay the embedder init
+        // cost up front; we upgrade per-index here on demand.
         let stats = if let Some(col) = self.open_code_vector().await {
             let retrieve_cfg =
                 hoangsa_memory_retrieve::IndexConfig::load_or_default(&self.inner.root).await;
             let mut idx = hoangsa_memory_retrieve::Indexer::new(
-                self.inner.store.clone(),
+                res.store.clone(),
                 hoangsa_memory_parse::LanguageRegistry::new(),
             )
             .with_config(&retrieve_cfg);
             idx = idx.with_vector_store(col);
             idx.index_path(&src).await?
         } else {
-            self.inner.indexer.index_path(&src).await?
+            res.indexer.index_path(&src).await?
         };
         let reparsed = stats.files.saturating_sub(stats.files_skipped);
         // Counts are deltas for this run. `files_skipped` = content-hash
@@ -610,8 +801,9 @@ impl Server {
         let cfg = CurationConfig::load_or_default(&self.inner.root).await;
         let mem_cfg = MemoryConfig::load_or_default(&self.inner.root).await;
         let staged = stage || cfg.requires_review();
+        let res = self.resources().await?;
         if staged {
-            self.inner.store.markdown.append_pending_fact(&fact).await?;
+            res.store.markdown.append_pending_fact(&fact).await?;
             let path = self.inner.root.join("MEMORY.pending.md");
             let text = format!(
                 "staged (review mode) — run `memory_promote` to accept: {}",
@@ -625,8 +817,7 @@ impl Server {
             });
             return Ok(ToolOutput::new(data, text));
         }
-        match self
-            .inner
+        match res
             .store
             .markdown
             .append_fact_guarded(
@@ -712,12 +903,12 @@ impl Server {
         let cfg = CurationConfig::load_or_default(&self.inner.root).await;
         let mem_cfg = MemoryConfig::load_or_default(&self.inner.root).await;
         let staged = stage || cfg.requires_review();
+        let res = self.resources().await?;
 
         // Conflict check: a lesson with the same trigger already exists.
         // In review mode we always stage; in auto mode we still refuse to
         // silently overwrite — force the agent to stage + escalate.
-        let conflict = self
-            .inner
+        let conflict = res
             .store
             .markdown
             .read_lessons()
@@ -727,8 +918,7 @@ impl Server {
             .find(|l| l.trigger.trim().eq_ignore_ascii_case(lesson.trigger.trim()));
 
         if staged || conflict.is_some() {
-            self.inner
-                .store
+            res.store
                 .markdown
                 .append_pending_lesson(&lesson)
                 .await?;
@@ -755,8 +945,7 @@ impl Server {
             });
             return Ok(ToolOutput::new(data, text));
         }
-        match self
-            .inner
+        match res
             .store
             .markdown
             .append_lesson_guarded(
@@ -801,7 +990,8 @@ impl Server {
         let trimmed = text.trim().to_string();
         let mem_cfg = MemoryConfig::load_or_default(&self.inner.root).await;
         match self
-            .inner
+            .resources()
+            .await?
             .store
             .markdown
             .append_preference_guarded(
@@ -842,7 +1032,8 @@ impl Server {
         } = serde_json::from_value(args)?;
         let md_kind = parse_md_kind(&kind)?;
         let idx = self
-            .inner
+            .resources()
+            .await?
             .store
             .markdown
             .replace(md_kind, &query, &new_text)
@@ -870,7 +1061,13 @@ impl Server {
         }
         let Args { kind, query } = serde_json::from_value(args)?;
         let md_kind = parse_md_kind(&kind)?;
-        let idx = self.inner.store.markdown.remove(md_kind, &query).await?;
+        let idx = self
+            .resources()
+            .await?
+            .store
+            .markdown
+            .remove(md_kind, &query)
+            .await?;
         let path = md_kind_path(&self.inner.root, md_kind);
         let text = format!("removed entry [{idx}] from {}", path.display());
         let data = json!({
@@ -918,7 +1115,8 @@ impl Server {
             .join(format!("{clean_slug}.draft"));
         tokio::fs::create_dir_all(&draft_dir).await?;
         tokio::fs::write(draft_dir.join("SKILL.md"), body.as_bytes()).await?;
-        self.inner
+        self.resources()
+            .await?
             .store
             .markdown
             .append_history(&hoangsa_memory_store::markdown::HistoryEntry {
@@ -946,7 +1144,7 @@ impl Server {
     }
 
     async fn tool_skills_list(&self) -> anyhow::Result<ToolOutput> {
-        let skills = self.inner.store.markdown.list_skills().await?;
+        let skills = self.resources().await?.store.markdown.list_skills().await?;
         let text = if skills.is_empty() {
             format!(
                 "(no skills installed — drop a folder into {}/skills/)",
@@ -1021,7 +1219,8 @@ impl Server {
             .and_then(|a| a.include_on_demand)
             .unwrap_or(false);
 
-        let md = &self.inner.store.markdown;
+        let res = self.resources().await?;
+        let md = &res.store.markdown;
         let mut text = String::new();
         let mut fact_count = 0usize;
         let mut on_demand_count = 0usize;
@@ -1117,7 +1316,8 @@ impl Server {
         let Args { id } = serde_json::from_value(args)?;
         let id = id.trim();
 
-        let md = &self.inner.store.markdown;
+        let res = self.resources().await?;
+        let md = &res.store.markdown;
 
         if let Some(Ok(idx)) = id
             .strip_prefix('F')
@@ -1241,8 +1441,13 @@ impl Server {
                     intent: intent.clone(),
                     at: OffsetDateTime::now_utc(),
                 };
-                if let Err(e) = self.inner.store.episodes.append(&ev).await {
-                    warn!(error = %e, "failed to log NudgeInvoked event");
+                match self.resources().await {
+                    Ok(res) => {
+                        if let Err(e) = res.store.episodes.append(&ev).await {
+                            warn!(error = %e, "failed to log NudgeInvoked event");
+                        }
+                    }
+                    Err(e) => warn!(error = %e, "failed to open resources for NudgeInvoked"),
                 }
                 (
                     "Nudge before a risky step: recall relevant lessons and plan.",
@@ -1285,7 +1490,8 @@ impl Server {
         &self,
         fqn: &str,
     ) -> anyhow::Result<Result<(hoangsa_memory_graph::Node, String), ToolOutput>> {
-        let g = &self.inner.graph;
+        let res = self.resources().await?;
+        let g = &res.graph;
         if let Some(n) = g.get(fqn).await? {
             let canonical = n.fqn.clone();
             return Ok(Ok((n, canonical)));
@@ -1360,7 +1566,7 @@ impl Server {
             Err(err) => return Ok(err),
         };
 
-        let hits = self.inner.graph.impact(&fqn, dir, depth).await?;
+        let hits = self.resources().await?.graph.impact(&fqn, dir, depth).await?;
 
         // Group by depth for a stable, readable rendering. `BTreeMap`
         // keeps the keys in ascending order without an extra sort.
@@ -1483,7 +1689,8 @@ impl Server {
             Ok(pair) => pair,
             Err(err) => return Ok(err),
         };
-        let g = &self.inner.graph;
+        let res = self.resources().await?;
+        let g = &res.graph;
 
         let mut callers = g.in_neighbors(&fqn, hoangsa_memory_graph::EdgeKind::Calls).await?;
         let mut callees = g.out_neighbors(&fqn, hoangsa_memory_graph::EdgeKind::Calls).await?;
@@ -1601,8 +1808,9 @@ impl Server {
         // image line range with the declaration spans of symbols in
         // the file. We use `symbols_in_file` on the post-image path
         // because that's the identity after the edit.
-        let g = &self.inner.graph;
-        let store = &self.inner.store;
+        let res = self.resources().await?;
+        let g = &res.graph;
+        let store = &res.store;
         let mut touched: std::collections::BTreeMap<String, hoangsa_memory_graph::Node> =
             std::collections::BTreeMap::new();
         let mut file_hits: Vec<serde_json::Value> = Vec::new();
@@ -1808,7 +2016,8 @@ impl Server {
         } = serde_json::from_value(args)?;
 
         let id = self
-            .inner
+            .resources()
+            .await?
             .store
             .episodes
             .append_turn(
@@ -1852,7 +2061,13 @@ impl Server {
         let Args { query, top_k } = serde_json::from_value(args)?;
         let k = top_k.unwrap_or(10);
 
-        let hits = self.inner.store.episodes.search_turns(&query, k).await?;
+        let hits = self
+            .resources()
+            .await?
+            .store
+            .episodes
+            .search_turns(&query, k)
+            .await?;
         if hits.is_empty() {
             return Ok(ToolOutput::new(json!({"count": 0}), "no matching turns"));
         }
@@ -2832,6 +3047,10 @@ async fn render_retrieval(r: &hoangsa_memory_core::Retrieval, root: &Path) -> St
     r.render_with(&cfg.render_options())
 }
 
+fn now_unix() -> i64 {
+    OffsetDateTime::now_utc().unix_timestamp()
+}
+
 fn first_line(s: &str) -> String {
     s.lines().next().unwrap_or("").trim().to_string()
 }
@@ -2931,14 +3150,23 @@ fn cap_error_output(e: CapExceededError) -> ToolOutput {
 // Background file watcher
 // ===========================================================================
 
-/// Watch `src` for file changes and reindex through `inner.indexer`.
+/// Watch `src` for file changes and reindex through the project's Indexer.
 ///
 /// Mirrors the debounce + batch logic in `cmd_watch` but runs in-process
 /// alongside the MCP daemon, sharing the same `Indexer` (and therefore the
 /// same redb write lock). This avoids the "daemon is running" conflict
 /// that blocks the standalone `hoangsa-memory watch`.
+///
+/// Resolves the `Indexer` per batch via [`Server::resources_if_warm`] —
+/// **not** [`Server::resources`] — so the watcher cooperates with
+/// Phase-5 idle eviction. If the bundle has been dropped while no
+/// user-driven traffic arrived, the watcher drops its batch and waits
+/// for the next user tool call to rehydrate the project; chunk IDs are
+/// content-hash-derived, so a subsequent `memory_index` re-picks up
+/// every changed file. Without this gate, any project with background
+/// fs activity (git checkout, npm install) would never stay evicted.
 async fn run_watcher(
-    inner: Arc<Inner>,
+    server: Server,
     src: PathBuf,
     debounce: std::time::Duration,
 ) -> anyhow::Result<()> {
@@ -2978,28 +3206,37 @@ async fn run_watcher(
 
         let changed_n = changed.len();
         let deleted_n = deleted.len();
+        if changed_n + deleted_n == 0 {
+            continue;
+        }
 
+        let Some(res) = server.resources_if_warm().await else {
+            debug!(
+                changed = changed_n,
+                deleted = deleted_n,
+                "watcher: bundle evicted; dropping batch (will be re-scanned on next user reindex)"
+            );
+            continue;
+        };
         for path in deleted {
-            if let Err(e) = inner.indexer.purge_path(&path).await {
+            if let Err(e) = res.indexer.purge_path(&path).await {
                 warn!(?path, error = %e, "watcher: purge failed");
             }
         }
         for path in changed {
-            if let Err(e) = inner.indexer.index_file(&path).await {
+            if let Err(e) = res.indexer.index_file(&path).await {
                 warn!(?path, error = %e, "watcher: re-index failed");
             }
         }
 
-        if changed_n + deleted_n > 0 {
-            if let Err(e) = inner.indexer.commit().await {
-                warn!(error = %e, "watcher: fts commit failed");
-            }
-            debug!(
-                changed = changed_n,
-                deleted = deleted_n,
-                "watcher: reindexed"
-            );
+        if let Err(e) = res.indexer.commit().await {
+            warn!(error = %e, "watcher: fts commit failed");
         }
+        debug!(
+            changed = changed_n,
+            deleted = deleted_n,
+            "watcher: reindexed"
+        );
     }
     Ok(())
 }
@@ -3106,15 +3343,41 @@ pub async fn run_socket(server: Server) -> anyhow::Result<()> {
     }
 }
 
+/// Idle ceiling on a single socket connection. A client that opens the
+/// socket and goes silent (no read, no close) would otherwise pin an
+/// `Arc<Server>` clone — and through it, defer eviction of any data the
+/// dispatch chain might touch — for the daemon's lifetime. 5 min is well
+/// above the cadence of any real MCP client (Claude Code keep-alive +
+/// per-tool RPCs land within seconds) while trimming zombie connections
+/// in bounded time.
+const SOCKET_IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
+
 /// Handle one Unix-socket connection: read lines, dispatch, respond.
-async fn handle_socket_conn(server: Server, stream: tokio::net::UnixStream) -> anyhow::Result<()> {
+pub(crate) async fn handle_socket_conn(
+    server: Server,
+    stream: tokio::net::UnixStream,
+) -> anyhow::Result<()> {
     let (reader, mut writer) = stream.into_split();
     let mut reader = BufReader::new(reader);
     let mut line = String::new();
 
     loop {
         line.clear();
-        let n = reader.read_line(&mut line).await?;
+        let n = match tokio::time::timeout(
+            SOCKET_IDLE_TIMEOUT,
+            reader.read_line(&mut line),
+        )
+        .await
+        {
+            Ok(res) => res?,
+            Err(_) => {
+                debug!(
+                    idle_secs = SOCKET_IDLE_TIMEOUT.as_secs(),
+                    "socket connection idle; closing"
+                );
+                break;
+            }
+        };
         if n == 0 {
             break;
         }
