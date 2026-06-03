@@ -64,6 +64,24 @@ fn claude_json_path() -> Result<PathBuf, String> {
     }
 }
 
+/// Resolve the Codex config directory. `CODEX_HOME` is useful for tests and
+/// alternate profiles; the normal user-facing location is `$HOME/.codex`.
+fn codex_config_dir() -> Result<PathBuf, String> {
+    if let Some(raw) = std::env::var_os("CODEX_HOME") {
+        let s = raw.to_string_lossy().into_owned();
+        if !s.is_empty() {
+            if s == "~" {
+                return home_path();
+            }
+            if let Some(rest) = s.strip_prefix("~/") {
+                return Ok(home_path()?.join(rest));
+            }
+            return Ok(PathBuf::from(s));
+        }
+    }
+    Ok(home_path()?.join(".codex"))
+}
+
 /// Derive an install root from a binary path. Returns `Some` only when
 /// the binary lives in an installed layout `<root>/bin/<name>` — i.e.
 /// the immediate parent is literally named `bin`. This guard prevents
@@ -135,8 +153,46 @@ struct InstallFlags {
     dry_run: bool,
     no_memory: bool,
     skip_path_edit: bool,
+    target: InstallTarget,
     /// Value of `--task-manager[=<clickup|asana|none>]`; None when not provided.
     task_manager: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+enum InstallTarget {
+    #[default]
+    Claude,
+    Codex,
+    Both,
+}
+
+impl InstallTarget {
+    fn parse(raw: &str) -> Result<Self, String> {
+        match raw {
+            "claude" => Ok(Self::Claude),
+            "codex" => Ok(Self::Codex),
+            "both" => Ok(Self::Both),
+            other => Err(format!(
+                "invalid --target value: {other} (expected claude|codex|both)"
+            )),
+        }
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Claude => "claude",
+            Self::Codex => "codex",
+            Self::Both => "both",
+        }
+    }
+
+    fn includes_claude(self) -> bool {
+        matches!(self, Self::Claude | Self::Both)
+    }
+
+    fn includes_codex(self) -> bool {
+        matches!(self, Self::Codex | Self::Both)
+    }
 }
 
 fn parse_flags(args: &[&str]) -> Result<InstallFlags, String> {
@@ -150,6 +206,16 @@ fn parse_flags(args: &[&str]) -> Result<InstallFlags, String> {
             "--dry-run" => f.dry_run = true,
             "--no-memory" => f.no_memory = true,
             "--skip-path-edit" => f.skip_path_edit = true,
+            "--target" => {
+                i += 1;
+                if i >= args.len() {
+                    return Err("--target requires a value (claude|codex|both)".into());
+                }
+                f.target = InstallTarget::parse(args[i])?;
+            }
+            s if s.starts_with("--target=") => {
+                f.target = InstallTarget::parse(&s["--target=".len()..])?;
+            }
             "--task-manager" => {
                 i += 1;
                 if i >= args.len() {
@@ -393,9 +459,7 @@ pub mod templates {
                 // skill lands at `skills/<name>/SKILL.md`.
                 let mut t = tail.components();
                 match t.next() {
-                    Some(c) if c.as_os_str() == "hoangsa" => {
-                        Path::new("skills").join(t.as_path())
-                    }
+                    Some(c) if c.as_os_str() == "hoangsa" => Path::new("skills").join(t.as_path()),
                     _ => Path::new("skills").join(&tail),
                 }
             }
@@ -592,7 +656,9 @@ pub mod hooks {
                     path.display()
                 ))),
             },
-            Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(Value::Object(serde_json::Map::new())),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {
+                Ok(Value::Object(serde_json::Map::new()))
+            }
             Err(e) => Err(e),
         }
     }
@@ -653,7 +719,11 @@ pub mod hooks {
 
         let mut pre_tool_use = vec![
             managed_entry(format!("{cli} hook lesson-guard"), 10, Some("Edit|Write")),
-            managed_entry(format!("{cli} hook enforce"), 10, Some("Edit|Write|Bash|NotebookEdit")),
+            managed_entry(
+                format!("{cli} hook enforce"),
+                10,
+                Some("Edit|Write|Bash|NotebookEdit"),
+            ),
         ];
 
         // `hsp` normally ships alongside the memory bins in both release
@@ -703,7 +773,11 @@ pub mod hooks {
         let Some(obj) = entry.as_object() else {
             return false;
         };
-        if obj.get(MANAGED_SENTINEL).and_then(|v| v.as_bool()).unwrap_or(false) {
+        if obj
+            .get(MANAGED_SENTINEL)
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+        {
             return true;
         }
         if let Some(hooks) = obj.get("hooks").and_then(|h| h.as_array()) {
@@ -721,10 +795,7 @@ pub mod hooks {
     /// Dedupe key for entries: matcher (or "") + first command string.
     /// Sufficient for our own entries and for the common user-authored shape.
     fn entry_dedupe_key(entry: &Value) -> String {
-        let matcher = entry
-            .get("matcher")
-            .and_then(|m| m.as_str())
-            .unwrap_or("");
+        let matcher = entry.get("matcher").and_then(|m| m.as_str()).unwrap_or("");
         let cmd = entry
             .get("hooks")
             .and_then(|h| h.as_array())
@@ -756,7 +827,9 @@ pub mod hooks {
             Some(o) => o,
             None => {
                 *hooks_val = Value::Object(serde_json::Map::new());
-                hooks_val.as_object_mut().expect("just replaced with object")
+                hooks_val
+                    .as_object_mut()
+                    .expect("just replaced with object")
             }
         };
 
@@ -935,15 +1008,20 @@ pub mod hooks {
             let tmp = tempdir().expect("tempdir");
             let root = sandbox_root(tmp.path());
             let mut settings = fresh_settings();
-            let added =
-                merge_hoangsa_hooks(&mut settings, &build_hoangsa_hooks_inner(Some(&root)));
+            let added = merge_hoangsa_hooks(&mut settings, &build_hoangsa_hooks_inner(Some(&root)));
             // 2 SessionStart + 2 Stop + 1 PostToolUse + 2 PreToolUse + 1 PreCompact + 1 SessionEnd = 9
             assert_eq!(added, 9, "fresh merge lands every managed entry");
-            let hooks = settings.get("hooks").and_then(|h| h.as_object()).expect("hooks present");
+            let hooks = settings
+                .get("hooks")
+                .and_then(|h| h.as_object())
+                .expect("hooks present");
             assert!(hooks.contains_key("SessionStart"));
             assert!(hooks.contains_key("Stop"));
             assert!(hooks.contains_key("PreToolUse"));
-            let pre = hooks.get("PreToolUse").and_then(|v| v.as_array()).expect("PreToolUse array");
+            let pre = hooks
+                .get("PreToolUse")
+                .and_then(|v| v.as_array())
+                .expect("PreToolUse array");
             assert_eq!(pre.len(), 2);
         }
 
@@ -987,13 +1065,17 @@ pub mod hooks {
             let mut settings = fresh_settings();
 
             let first = merge_hoangsa_hooks(&mut settings, &build_hoangsa_hooks_inner(Some(&root)));
-            let second = merge_hoangsa_hooks(&mut settings, &build_hoangsa_hooks_inner(Some(&root)));
+            let second =
+                merge_hoangsa_hooks(&mut settings, &build_hoangsa_hooks_inner(Some(&root)));
 
             assert_eq!(first, 9);
             assert_eq!(second, 9, "re-merge re-adds the same set (replacing ours)");
 
             // Total entries across events stays at 9 — never doubles.
-            let hooks = settings.get("hooks").and_then(|h| h.as_object()).expect("hooks");
+            let hooks = settings
+                .get("hooks")
+                .and_then(|h| h.as_object())
+                .expect("hooks");
             let total: usize = hooks
                 .values()
                 .filter_map(|v| v.as_array())
@@ -1120,7 +1202,10 @@ pub mod hooks {
             });
             let wrote = apply_statusline(&mut settings, &default_statusline(&target));
             assert!(!wrote, "valid managed statusLine must be preserved");
-            assert_eq!(settings["statusLine"]["command"].as_str(), Some(cmd.as_str()));
+            assert_eq!(
+                settings["statusLine"]["command"].as_str(),
+                Some(cmd.as_str())
+            );
         }
 
         #[test]
@@ -1134,7 +1219,10 @@ pub mod hooks {
                 "statusLine": { "type": "command", "command": "/nope/custom-bar.sh" }
             });
             let wrote = apply_statusline(&mut settings, &default_statusline(&target));
-            assert!(!wrote, "non-managed statusLine must be preserved unconditionally");
+            assert!(
+                !wrote,
+                "non-managed statusLine must be preserved unconditionally"
+            );
             assert_eq!(
                 settings["statusLine"]["command"].as_str(),
                 Some("/nope/custom-bar.sh")
@@ -1171,7 +1259,10 @@ pub mod hooks {
             let v = json!({ "a": { "b": 1 } });
             save_settings(&p, &v).expect("save");
             let raw = std::fs::read_to_string(&p).expect("read");
-            assert!(raw.contains("  \"a\""), "expected 2-space indent, got: {raw}");
+            assert!(
+                raw.contains("  \"a\""),
+                "expected 2-space indent, got: {raw}"
+            );
             assert!(raw.ends_with('\n'), "expected trailing newline");
             let back = load_settings(&p).expect("load back");
             assert_eq!(back, v);
@@ -1320,10 +1411,7 @@ pub mod relocate {
             let dst = dest.join(&name);
             // Atomic-ish overwrite: copy to sibling tmp, chmod, rename. Matches
             // `install.sh`'s `install_bin` so behavior stays consistent.
-            let tmp = dst.with_extension(format!(
-                "new.{}",
-                std::process::id()
-            ));
+            let tmp = dst.with_extension(format!("new.{}", std::process::id()));
             fs::copy(src, &tmp)?;
             set_executable(&tmp)?;
             // `rename` across the same dir is atomic on POSIX + Windows.
@@ -1479,7 +1567,10 @@ pub mod relocate {
 
             let report = relocate_memory_bins_to(&staging, &dest).expect("relocate");
             assert_eq!(report.relocated.len(), 1);
-            assert_eq!(report.skipped_missing, vec!["hoangsa-memory-mcp".to_string()]);
+            assert_eq!(
+                report.skipped_missing,
+                vec!["hoangsa-memory-mcp".to_string()]
+            );
         }
 
         #[test]
@@ -1532,6 +1623,7 @@ pub mod relocate {
 pub mod mode {
     use super::*;
     use serde_json::{Value, json};
+    use toml::value::{Table, Value as TomlValue};
 
     /// The quality-gate skills shipped with `--global` installs (REQ /
     /// Decision #13). Kept as a single source of truth so dry-run preview,
@@ -1589,9 +1681,19 @@ pnpm-lock.yaml
         super::claude_json_path()
     }
 
+    /// Path to Codex's global `config.toml`.
+    pub fn codex_global_config_path() -> Result<PathBuf, String> {
+        Ok(super::codex_config_dir()?.join("config.toml"))
+    }
+
     /// Path to `<cwd>/.mcp.json` — the Claude Code per-project MCP config.
     pub fn local_mcp_path(cwd: &Path) -> PathBuf {
         cwd.join(".mcp.json")
+    }
+
+    /// Path to `<cwd>/.codex/config.toml`.
+    pub fn codex_local_config_path(cwd: &Path) -> PathBuf {
+        cwd.join(".codex").join("config.toml")
     }
 
     /// Absolute path to the globally-installed `hoangsa-memory-mcp` binary.
@@ -1603,6 +1705,140 @@ pnpm-lock.yaml
         Ok(super::memory_install_dir()?
             .join("bin")
             .join("hoangsa-memory-mcp"))
+    }
+
+    fn load_toml_table(path: &Path) -> io::Result<Table> {
+        match fs::read_to_string(path) {
+            Ok(raw) => {
+                if raw.trim().is_empty() {
+                    return Ok(Table::new());
+                }
+                raw.parse::<TomlValue>()
+                    .map_err(|e| io::Error::other(format!("parse {}: {e}", path.display())))?
+                    .as_table()
+                    .cloned()
+                    .ok_or_else(|| {
+                        io::Error::other(format!("{} root is not a TOML table", path.display()))
+                    })
+            }
+            Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(Table::new()),
+            Err(e) => Err(e),
+        }
+    }
+
+    fn save_toml_table(path: &Path, table: &Table) -> io::Result<()> {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        let mut out = toml::to_string_pretty(table).map_err(io::Error::other)?;
+        if !out.ends_with('\n') {
+            out.push('\n');
+        }
+        fs::write(path, out)
+    }
+
+    fn get_or_create_table<'a>(table: &'a mut Table, key: &str) -> &'a mut Table {
+        let needs_table = !matches!(table.get(key), Some(TomlValue::Table(_)));
+        if needs_table {
+            table.insert(key.to_string(), TomlValue::Table(Table::new()));
+        }
+        table
+            .get_mut(key)
+            .and_then(TomlValue::as_table_mut)
+            .expect("table inserted above")
+    }
+
+    fn build_codex_mcp_entry(
+        command: &Path,
+        existing: Option<&TomlValue>,
+        preserve_existing_memory_root: bool,
+    ) -> TomlValue {
+        let mut entry = Table::new();
+        entry.insert(
+            "command".to_string(),
+            TomlValue::String(command.display().to_string()),
+        );
+        entry.insert("args".to_string(), TomlValue::Array(Vec::new()));
+        entry.insert("startup_timeout_sec".to_string(), TomlValue::Integer(20));
+        entry.insert("tool_timeout_sec".to_string(), TomlValue::Integer(120));
+
+        let mut env = Table::new();
+        if let Some(existing_env) = existing
+            .and_then(TomlValue::as_table)
+            .and_then(|t| t.get("env"))
+            .and_then(TomlValue::as_table)
+        {
+            for (k, v) in existing_env {
+                if preserve_existing_memory_root || k != "HOANGSA_MEMORY_ROOT" {
+                    env.insert(k.clone(), v.clone());
+                }
+            }
+        }
+        env.insert(
+            "RUST_LOG".to_string(),
+            TomlValue::String("info".to_string()),
+        );
+        entry.insert("env".to_string(), TomlValue::Table(env));
+
+        TomlValue::Table(entry)
+    }
+
+    fn merge_codex_mcp_entry(
+        config_path: &Path,
+        memory_bin: &Path,
+        preserve_existing_memory_root: bool,
+    ) -> io::Result<()> {
+        let mut root = load_toml_table(config_path)?;
+        let servers = get_or_create_table(&mut root, "mcp_servers");
+        let existing = servers.get("hoangsa-memory").cloned();
+        servers.insert(
+            "hoangsa-memory".to_string(),
+            build_codex_mcp_entry(memory_bin, existing.as_ref(), preserve_existing_memory_root),
+        );
+        save_toml_table(config_path, &root)
+    }
+
+    pub fn register_codex_mcp_global_to(config_path: &Path, memory_bin: &Path) -> io::Result<()> {
+        merge_codex_mcp_entry(config_path, memory_bin, false)
+    }
+
+    pub fn register_codex_mcp_local_to(
+        config_path: &Path,
+        memory_bin: &Path,
+    ) -> Result<(), InstallError> {
+        if !memory_bin.exists() {
+            return Err(InstallError {
+                exit_code: 3,
+                message: format!(
+                    "hoangsa-memory-mcp not found at {} — run `hoangsa-cli install --global` first to install hoangsa-memory bins",
+                    memory_bin.display()
+                ),
+            });
+        }
+        merge_codex_mcp_entry(config_path, memory_bin, true).map_err(|e| InstallError {
+            exit_code: 1,
+            message: format!("write {}: {}", config_path.display(), e),
+        })
+    }
+
+    pub fn register_codex_mcp_global() -> Result<(), String> {
+        let config_path = codex_global_config_path()?;
+        let memory_bin = memory_mcp_bin()?;
+        if !memory_bin.exists() {
+            eprintln!(
+                "install: warning — hoangsa-memory-mcp not found at {} (writing config anyway)",
+                memory_bin.display()
+            );
+        }
+        register_codex_mcp_global_to(&config_path, &memory_bin).map_err(|e| e.to_string())
+    }
+
+    pub fn register_codex_mcp_local(cwd: &Path) -> Result<(), InstallError> {
+        let memory_bin = memory_mcp_bin().map_err(|m| InstallError {
+            exit_code: 1,
+            message: m,
+        })?;
+        register_codex_mcp_local_to(&codex_local_config_path(cwd), &memory_bin)
     }
 
     /// Load a JSON object from disk or return `{}` on missing / unreadable
@@ -1737,10 +1973,7 @@ pnpm-lock.yaml
     /// `mcpServers`, whose only key is `hoangsa-memory`. Any other
     /// top-level key or any other MCP server means the user has
     /// legitimate config there — never touch.
-    pub fn cleanup_orphan_claude_json(
-        orphan_path: &Path,
-        target_path: &Path,
-    ) -> io::Result<bool> {
+    pub fn cleanup_orphan_claude_json(orphan_path: &Path, target_path: &Path) -> io::Result<bool> {
         if orphan_path == target_path {
             return Ok(false);
         }
@@ -1795,10 +2028,7 @@ pnpm-lock.yaml
     /// Test-friendly variant of [`register_mcp_local`]. Writes to the
     /// explicit `mcp_json` path and treats `memory_bin` as the
     /// existence-gated prerequisite.
-    pub fn register_mcp_local_to(
-        mcp_json: &Path,
-        memory_bin: &Path,
-    ) -> Result<(), InstallError> {
+    pub fn register_mcp_local_to(mcp_json: &Path, memory_bin: &Path) -> Result<(), InstallError> {
         if !memory_bin.exists() {
             return Err(InstallError {
                 exit_code: 3,
@@ -1918,9 +2148,11 @@ pnpm-lock.yaml
             // Sanity: a local-only action that MUST NOT appear in global —
             // included here only so the assertion catches regressions if
             // the planner mistakenly merges local actions into global.
-            let _forbidden_for_global = [cwd.join(".mcp.json"),
+            let _forbidden_for_global = [
+                cwd.join(".mcp.json"),
                 cwd.join(".hoangsa").join("rules.json"),
-                cwd.join(".memoryignore")];
+                cwd.join(".memoryignore"),
+            ];
             actions
         }
 
@@ -1936,9 +2168,8 @@ pnpm-lock.yaml
                     .get("target")
                     .and_then(|t| t.as_str().map(PathBuf::from))
                     .or_else(|| {
-                        a.get("target").and_then(|t| {
-                            serde_json::from_value::<PathBuf>(t.clone()).ok()
-                        })
+                        a.get("target")
+                            .and_then(|t| serde_json::from_value::<PathBuf>(t.clone()).ok())
                     })
                     .expect("action target present");
                 assert!(
@@ -2055,6 +2286,83 @@ pnpm-lock.yaml
         }
 
         #[test]
+        fn codex_global_merge_preserves_existing_server_and_drops_memory_root() {
+            let home = tempdir().expect("home tempdir");
+            let config = home.path().join(".codex").join("config.toml");
+            fs::create_dir_all(config.parent().expect("parent")).expect("mkdir");
+            fs::write(
+                &config,
+                r#"
+model = "gpt-5"
+
+[mcp_servers.other]
+command = "/usr/local/bin/other"
+args = ["--stdio"]
+
+[mcp_servers.hoangsa-memory]
+command = "/old/bin/hoangsa-memory-mcp"
+args = []
+
+[mcp_servers.hoangsa-memory.env]
+RUST_LOG = "debug"
+HOANGSA_MEMORY_ROOT = "/should/not/be/global"
+"#,
+            )
+            .expect("seed codex config");
+
+            let bin = home.path().join("bin").join("hoangsa-memory-mcp");
+            register_codex_mcp_global_to(&config, &bin).expect("register");
+
+            let raw = fs::read_to_string(&config).expect("read back");
+            let back: TomlValue = raw.parse().expect("parse toml");
+            assert_eq!(back["model"].as_str(), Some("gpt-5"));
+            assert_eq!(
+                back["mcp_servers"]["other"]["command"].as_str(),
+                Some("/usr/local/bin/other")
+            );
+            let hoangsa = &back["mcp_servers"]["hoangsa-memory"];
+            assert_eq!(
+                hoangsa["command"].as_str(),
+                Some(bin.display().to_string().as_str())
+            );
+            assert_eq!(hoangsa["startup_timeout_sec"].as_integer(), Some(20));
+            assert_eq!(hoangsa["tool_timeout_sec"].as_integer(), Some(120));
+            assert_eq!(hoangsa["env"]["RUST_LOG"].as_str(), Some("info"));
+            assert!(
+                hoangsa["env"].get("HOANGSA_MEMORY_ROOT").is_none(),
+                "global Codex config must not pin every session to one memory root"
+            );
+        }
+
+        #[test]
+        fn codex_local_merge_preserves_existing_memory_root() {
+            let cwd = tempdir().expect("cwd tempdir");
+            let config = codex_local_config_path(cwd.path());
+            fs::create_dir_all(config.parent().expect("parent")).expect("mkdir");
+            fs::write(
+                &config,
+                r#"
+[mcp_servers.hoangsa-memory.env]
+HOANGSA_MEMORY_ROOT = "/project/.hoangsa/memory"
+"#,
+            )
+            .expect("seed codex config");
+            let bin = cwd.path().join("hoangsa-memory-mcp");
+            fs::write(&bin, "#!/bin/sh\n").expect("fake bin");
+
+            register_codex_mcp_local_to(&config, &bin).expect("register");
+
+            let raw = fs::read_to_string(&config).expect("read back");
+            let back: TomlValue = raw.parse().expect("parse toml");
+            let hoangsa = &back["mcp_servers"]["hoangsa-memory"];
+            assert_eq!(
+                hoangsa["env"]["HOANGSA_MEMORY_ROOT"].as_str(),
+                Some("/project/.hoangsa/memory")
+            );
+            assert_eq!(hoangsa["env"]["RUST_LOG"].as_str(), Some("info"));
+        }
+
+        #[test]
         fn seed_memory_ignore_preserves_existing() {
             let cwd = tempdir().expect("cwd tempdir");
             let existing = "custom/\n# user edits\n";
@@ -2073,7 +2381,10 @@ pnpm-lock.yaml
             let wrote = seed_memory_ignore(cwd.path()).expect("seed");
             assert!(wrote, "fresh cwd should get a seeded .memoryignore");
             let back = fs::read_to_string(cwd.path().join(".memoryignore")).expect("read back");
-            assert!(back.contains("node_modules/"), "seed contains standard ignores");
+            assert!(
+                back.contains("node_modules/"),
+                "seed contains standard ignores"
+            );
         }
 
         #[test]
@@ -2153,7 +2464,10 @@ pnpm-lock.yaml
                     }
                 }
             }
-            let _guard = EnvGuard("HOANGSA_INSTALL_DIR", std::env::var_os("HOANGSA_INSTALL_DIR"));
+            let _guard = EnvGuard(
+                "HOANGSA_INSTALL_DIR",
+                std::env::var_os("HOANGSA_INSTALL_DIR"),
+            );
             unsafe {
                 std::env::set_var("HOANGSA_INSTALL_DIR", custom.path());
             }
@@ -2236,8 +2550,7 @@ pnpm-lock.yaml
                 "mcpServers": { "hoangsa-memory": { "command": "x" } },
                 "numStartups": 7
             });
-            fs::write(&orphan, serde_json::to_string_pretty(&content).unwrap())
-                .expect("write");
+            fs::write(&orphan, serde_json::to_string_pretty(&content).unwrap()).expect("write");
             let target = home.path().join(".claude.json");
 
             let removed = cleanup_orphan_claude_json(&orphan, &target).expect("cleanup");
@@ -2256,8 +2569,7 @@ pnpm-lock.yaml
                     "other-mcp": { "command": "y" }
                 }
             });
-            fs::write(&orphan, serde_json::to_string_pretty(&content).unwrap())
-                .expect("write");
+            fs::write(&orphan, serde_json::to_string_pretty(&content).unwrap()).expect("write");
             let target = home.path().join(".claude.json");
 
             let removed = cleanup_orphan_claude_json(&orphan, &target).expect("cleanup");
@@ -2276,8 +2588,7 @@ pnpm-lock.yaml
             let content = json!({
                 "mcpServers": { "hoangsa-memory": { "command": "x" } }
             });
-            fs::write(&target, serde_json::to_string_pretty(&content).unwrap())
-                .expect("write");
+            fs::write(&target, serde_json::to_string_pretty(&content).unwrap()).expect("write");
 
             let removed = cleanup_orphan_claude_json(&target, &target).expect("cleanup");
             assert!(!removed, "must not remove the active target");
@@ -2337,17 +2648,14 @@ pub fn cmd_install(args: &[&str]) {
         let mut actions_json: Vec<serde_json::Value> = Vec::new();
         let mut warnings: Vec<String> = Vec::new();
 
-        {
+        if flags.target.includes_claude() {
             match (
                 templates::templates_source_dir(mode, &cwd),
                 install_dst_dir(mode, &cwd),
             ) {
                 (Ok(src), Ok(dst)) => {
                     let manifest_path = templates::default_manifest_path().ok();
-                    let prev = match manifest_path
-                        .as_ref()
-                        .map(|p| templates::load_manifest(p))
-                    {
+                    let prev = match manifest_path.as_ref().map(|p| templates::load_manifest(p)) {
                         Some(Ok(m)) => m,
                         Some(Err(e)) => {
                             warnings.push(format!("load_manifest: {e}"));
@@ -2373,21 +2681,22 @@ pub fn cmd_install(args: &[&str]) {
             // no staging dir is advertised (normal for re-runs) and skipped
             // entirely under `--no-memory`.
             if !flags.no_memory
-                && let Some(staging) = relocate::staging_dir_from_env() {
-                    let dest_preview = relocate::memory_bin_dir()
-                        .unwrap_or_else(|_| PathBuf::from("~/.hoangsa/bin"));
-                    for src in relocate::source_memory_bins(&staging) {
-                        let name = src
-                            .file_name()
-                            .map(|n| n.to_string_lossy().into_owned())
-                            .unwrap_or_default();
-                        actions_json.push(json!({
-                            "action": "relocate_memory_bin",
-                            "src": src,
-                            "dst": dest_preview.join(&name),
-                        }));
-                    }
+                && let Some(staging) = relocate::staging_dir_from_env()
+            {
+                let dest_preview =
+                    relocate::memory_bin_dir().unwrap_or_else(|_| PathBuf::from("~/.hoangsa/bin"));
+                for src in relocate::source_memory_bins(&staging) {
+                    let name = src
+                        .file_name()
+                        .map(|n| n.to_string_lossy().into_owned())
+                        .unwrap_or_default();
+                    actions_json.push(json!({
+                        "action": "relocate_memory_bin",
+                        "src": src,
+                        "dst": dest_preview.join(&name),
+                    }));
                 }
+            }
 
             // T-05: mode-aware targets — MCP register, rule + memory_ignore
             // seed (local-only), and quality-skills (global-only). Every
@@ -2457,9 +2766,12 @@ pub fn cmd_install(args: &[&str]) {
                         .map(Path::to_path_buf)
                         .unwrap_or_else(|| PathBuf::from(".claude"));
                     let hooks_payload = hooks::build_hoangsa_hooks(&target_dir);
-                    let hooks_added = hooks::merge_hoangsa_hooks(&mut preview_settings, &hooks_payload);
-                    let statusline_set =
-                        hooks::apply_statusline(&mut preview_settings, &hooks::default_statusline(&target_dir));
+                    let hooks_added =
+                        hooks::merge_hoangsa_hooks(&mut preview_settings, &hooks_payload);
+                    let statusline_set = hooks::apply_statusline(
+                        &mut preview_settings,
+                        &hooks::default_statusline(&target_dir),
+                    );
                     actions_json.push(json!({
                         "action": "merge_settings",
                         "path": settings_file,
@@ -2471,13 +2783,43 @@ pub fn cmd_install(args: &[&str]) {
             }
         }
 
+        if flags.target.includes_codex() {
+            match mode {
+                "global" => match mode::codex_global_config_path() {
+                    Ok(p) => actions_json.push(json!({
+                        "action": "register_codex_mcp_global",
+                        "target": p,
+                    })),
+                    Err(e) => warnings.push(e),
+                },
+                "local" => {
+                    match mode::memory_mcp_bin() {
+                        Ok(bin) if !bin.exists() => warnings.push(format!(
+                            "hoangsa-memory-mcp missing at {} — live --local will exit 3",
+                            bin.display()
+                        )),
+                        Ok(_) => {}
+                        Err(e) => warnings.push(e),
+                    }
+                    actions_json.push(json!({
+                        "action": "register_codex_mcp_local",
+                        "target": mode::codex_local_config_path(&cwd),
+                    }));
+                }
+                _ => {}
+            }
+        }
+
         let preview = json!({
             "mode": mode,
+            "target": flags.target.as_str(),
             "actions": actions_json,
             "warnings": warnings,
             "targets": {
                 "global_claude_json": "~/.claude.json",
+                "global_codex_config": "~/.codex/config.toml",
                 "local_claude_dir": ".claude/",
+                "local_codex_config": ".codex/config.toml",
                 "memory_bin_dir": "~/.hoangsa/bin/",
                 "manifest": "~/.hoangsa/manifest.json"
             },
@@ -2486,10 +2828,47 @@ pub fn cmd_install(args: &[&str]) {
                 "local": flags.local,
                 "no_memory": flags.no_memory,
                 "skip_path_edit": flags.skip_path_edit,
+                "target": flags.target.as_str(),
                 "task_manager": flags.task_manager
             }
         });
         helpers::out(&preview);
+        return;
+    }
+
+    if !flags.target.includes_claude() {
+        let mut warnings: Vec<String> = Vec::new();
+        let mcp_target = match mode {
+            "global" => {
+                if let Err(e) = mode::register_codex_mcp_global() {
+                    eprintln!("install: register_codex_mcp_global failed: {e}");
+                    std::process::exit(1);
+                }
+                match mode::codex_global_config_path() {
+                    Ok(p) => Some(p),
+                    Err(e) => {
+                        warnings.push(format!("codex_global_config_path: {e}"));
+                        None
+                    }
+                }
+            }
+            "local" => {
+                if let Err(e) = mode::register_codex_mcp_local(&cwd) {
+                    eprintln!("install: {}", e.message);
+                    std::process::exit(e.exit_code);
+                }
+                Some(mode::codex_local_config_path(&cwd))
+            }
+            _ => None,
+        };
+        let status = if warnings.is_empty() { "ok" } else { "partial" };
+        helpers::out(&json!({
+            "status": status,
+            "warnings": warnings,
+            "mode": mode,
+            "target": flags.target.as_str(),
+            "mcp_target": mcp_target,
+        }));
         return;
     }
 
@@ -2546,26 +2925,26 @@ pub fn cmd_install(args: &[&str]) {
     // `--global` and `--local`. Skipped when `--no-memory` is set, or when
     // no staging dir was handed off (normal for plain `--local` re-runs
     // where the bins were already installed globally via the curl|sh path).
-    let (memory_report, memory_note): (Option<relocate::RelocateReport>, Option<String>) =
-        if flags.no_memory {
-            (None, Some("skipped: --no-memory".into()))
-        } else if let Some(staging) = relocate::staging_dir_from_env() {
-            match relocate::relocate_memory_bins(&staging) {
-                Ok(r) => (Some(r), None),
-                Err(e) => {
-                    eprintln!("install: relocate_memory_bins failed: {e}");
-                    std::process::exit(1);
-                }
+    let (memory_report, memory_note): (Option<relocate::RelocateReport>, Option<String>) = if flags
+        .no_memory
+    {
+        (None, Some("skipped: --no-memory".into()))
+    } else if let Some(staging) = relocate::staging_dir_from_env() {
+        match relocate::relocate_memory_bins(&staging) {
+            Ok(r) => (Some(r), None),
+            Err(e) => {
+                eprintln!("install: relocate_memory_bins failed: {e}");
+                std::process::exit(1);
             }
-        } else {
-            (
-                None,
-                Some(
-                    "skipped: no staging dir (set HOANGSA_STAGING_DIR or HOANGSA_TEMPLATES_DIR)"
-                        .into(),
-                ),
-            )
-        };
+        }
+    } else {
+        (
+            None,
+            Some(
+                "skipped: no staging dir (set HOANGSA_STAGING_DIR or HOANGSA_TEMPLATES_DIR)".into(),
+            ),
+        )
+    };
 
     // T-04: settings.json merge + statusline + legacy cleanup.
     // `dst` is already the `.claude/` dir — hooks/statusline want it verbatim.
@@ -2605,6 +2984,7 @@ pub fn cmd_install(args: &[&str]) {
     // and the `Global` arm writes only under `$HOME`, so no function
     // call here targets the wrong side.
     let mut mcp_target: Option<PathBuf> = None;
+    let mut codex_mcp_target: Option<PathBuf> = None;
     let mut rules_seeded = false;
     let mut memory_ignore_seeded = false;
     let mut quality_skills_pending: Vec<String> = Vec::new();
@@ -2670,6 +3050,29 @@ pub fn cmd_install(args: &[&str]) {
         _ => {}
     }
 
+    if flags.target.includes_codex() {
+        match mode {
+            "global" => {
+                if let Err(e) = mode::register_codex_mcp_global() {
+                    eprintln!("install: register_codex_mcp_global failed: {e}");
+                    std::process::exit(1);
+                }
+                match mode::codex_global_config_path() {
+                    Ok(p) => codex_mcp_target = Some(p),
+                    Err(e) => warnings.push(format!("codex_global_config_path: {e}")),
+                }
+            }
+            "local" => {
+                if let Err(e) = mode::register_codex_mcp_local(&cwd) {
+                    eprintln!("install: {}", e.message);
+                    std::process::exit(e.exit_code);
+                }
+                codex_mcp_target = Some(mode::codex_local_config_path(&cwd));
+            }
+            _ => {}
+        }
+    }
+
     let memory_relocated: Vec<PathBuf> = memory_report
         .as_ref()
         .map(|r| r.relocated.clone())
@@ -2700,6 +3103,7 @@ pub fn cmd_install(args: &[&str]) {
         "status": status,
         "warnings": warnings,
         "mode": mode,
+        "target": flags.target.as_str(),
         "src": src,
         "dst": dst,
         "manifest": manifest_path,
@@ -2715,6 +3119,7 @@ pub fn cmd_install(args: &[&str]) {
         "memory_skipped_missing": memory_skipped_missing,
         "memory_note": memory_note,
         "mcp_target": mcp_target,
+        "codex_mcp_target": codex_mcp_target,
         "rules_seeded": rules_seeded,
         "memory_ignore_seeded": memory_ignore_seeded,
         "quality_skills_present": quality_skills_present,

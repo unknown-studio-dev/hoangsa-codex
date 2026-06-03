@@ -7,18 +7,20 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicI64, Ordering};
 
-use serde::Deserialize;
-use serde_json::{Value, json};
 use hoangsa_memory_core::{
     Enforcement, Event, Fact, FactScope, Lesson, LessonTrigger, MemoryKind, MemoryMeta, Query,
 };
+use hoangsa_memory_parse::LanguageRegistry;
 use hoangsa_memory_policy::{
     CapExceededError, CurationConfig, GuardedAppendError, MarkdownStoreMemoryExt, MemoryConfig,
     MemoryKind as MdKind,
 };
-use hoangsa_memory_parse::LanguageRegistry;
 use hoangsa_memory_retrieve::{Indexer, RetrieveConfig, Retriever, VectorStoreConfig};
-use hoangsa_memory_store::{EmbeddedVectorStore, SharedEmbedder, StoreRoot, VectorCol, VectorStore};
+use hoangsa_memory_store::{
+    EmbeddedVectorStore, SharedEmbedder, StoreRoot, VectorCol, VectorStore,
+};
+use serde::Deserialize;
+use serde_json::{Value, json};
 use time::OffsetDateTime;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tracing::{debug, warn};
@@ -36,6 +38,7 @@ use crate::proto::{
 const MEMORY_URI: &str = "hoangsa-memory://memory/MEMORY.md";
 /// URI of the `LESSONS.md` resource.
 const LESSONS_URI: &str = "hoangsa-memory://memory/LESSONS.md";
+const MCP_INSTRUCTIONS: &str = "Use hoangsa-memory before non-trivial code claims or edits. Start with memory_wakeup or memory_recall. Before editing a known symbol, call memory_impact. After durable findings, use memory_remember_fact, memory_remember_lesson, or memory_remember_preference conservatively.";
 
 // ===========================================================================
 // Server
@@ -185,9 +188,7 @@ impl Server {
     /// Every call refreshes `last_access` so the eviction loop's
     /// idleness check is grounded in actual tool traffic.
     pub(crate) async fn resources(&self) -> anyhow::Result<Arc<ResourceBundle>> {
-        self.inner
-            .last_access
-            .store(now_unix(), Ordering::Relaxed);
+        self.inner.last_access.store(now_unix(), Ordering::Relaxed);
         if let Some(b) = self.inner.bundle.read().await.as_ref() {
             return Ok(b.clone());
         }
@@ -406,6 +407,7 @@ impl Server {
                 name: "hoangsa-memory-mcp".to_string(),
                 version: env!("CARGO_PKG_VERSION").to_string(),
             },
+            instructions: MCP_INSTRUCTIONS,
         };
         serde_json::to_value(result).unwrap_or_else(|_| json!({}))
     }
@@ -696,12 +698,7 @@ impl Server {
         if !want_body {
             for c in out.chunks.iter_mut() {
                 if c.preview.is_empty() && !c.body.is_empty() {
-                    c.preview = c
-                        .body
-                        .lines()
-                        .take(3)
-                        .collect::<Vec<_>>()
-                        .join("\n");
+                    c.preview = c.body.lines().take(3).collect::<Vec<_>>().join("\n");
                 }
                 c.body.clear();
             }
@@ -919,10 +916,7 @@ impl Server {
             .find(|l| l.trigger.trim().eq_ignore_ascii_case(lesson.trigger.trim()));
 
         if staged || conflict.is_some() {
-            res.store
-                .markdown
-                .append_pending_lesson(&lesson)
-                .await?;
+            res.store.markdown.append_pending_lesson(&lesson).await?;
             let note = if conflict.is_some() {
                 "staged (conflict with existing lesson — user must review)"
             } else {
@@ -1516,12 +1510,7 @@ impl Server {
                     candidates.len(),
                 );
                 for c in candidates.iter().take(shown) {
-                    text.push_str(&format!(
-                        "  {}  {}:{}\n",
-                        c.fqn,
-                        c.path.display(),
-                        c.line
-                    ));
+                    text.push_str(&format!("  {}  {}:{}\n", c.fqn, c.path.display(), c.line));
                 }
                 if candidates.len() > shown {
                     text.push_str(&format!("  … +{} more\n", candidates.len() - shown));
@@ -1567,7 +1556,12 @@ impl Server {
             Err(err) => return Ok(err),
         };
 
-        let hits = self.resources().await?.graph.impact(&fqn, dir, depth).await?;
+        let hits = self
+            .resources()
+            .await?
+            .graph
+            .impact(&fqn, dir, depth)
+            .await?;
 
         // Group by depth for a stable, readable rendering. `BTreeMap`
         // keeps the keys in ascending order without an extra sort.
@@ -1583,7 +1577,8 @@ impl Server {
         // nodes per file, ordered by hit density, so the caller sees
         // the tightly-coupled subsystems at a glance. Structured `data`
         // (JSON) is unchanged — the cap is text-surface only.
-        let output_cfg = hoangsa_memory_retrieve::OutputConfig::load_or_default(&self.inner.root).await;
+        let output_cfg =
+            hoangsa_memory_retrieve::OutputConfig::load_or_default(&self.inner.root).await;
         let group_by_file =
             output_cfg.impact_group_threshold > 0 && hits.len() > output_cfg.impact_group_threshold;
 
@@ -1693,12 +1688,18 @@ impl Server {
         let res = self.resources().await?;
         let g = &res.graph;
 
-        let mut callers = g.in_neighbors(&fqn, hoangsa_memory_graph::EdgeKind::Calls).await?;
-        let mut callees = g.out_neighbors(&fqn, hoangsa_memory_graph::EdgeKind::Calls).await?;
+        let mut callers = g
+            .in_neighbors(&fqn, hoangsa_memory_graph::EdgeKind::Calls)
+            .await?;
+        let mut callees = g
+            .out_neighbors(&fqn, hoangsa_memory_graph::EdgeKind::Calls)
+            .await?;
         let mut extends = g
             .out_neighbors(&fqn, hoangsa_memory_graph::EdgeKind::Extends)
             .await?;
-        let mut extended_by = g.in_neighbors(&fqn, hoangsa_memory_graph::EdgeKind::Extends).await?;
+        let mut extended_by = g
+            .in_neighbors(&fqn, hoangsa_memory_graph::EdgeKind::Extends)
+            .await?;
         let mut references = g
             .in_neighbors(&fqn, hoangsa_memory_graph::EdgeKind::References)
             .await?;
@@ -2017,8 +2018,10 @@ impl Server {
         // Blast radius: for every touched symbol, upstream impact. Union
         // into a single de-duped set so cross-symbol overlap (common on
         // real PRs) is naturally collapsed.
-        let mut impact_seen: std::collections::HashMap<String, (hoangsa_memory_graph::Node, usize)> =
-            std::collections::HashMap::new();
+        let mut impact_seen: std::collections::HashMap<
+            String,
+            (hoangsa_memory_graph::Node, usize),
+        > = std::collections::HashMap::new();
         for node in touched.values() {
             let radius = g
                 .impact(&node.fqn, hoangsa_memory_graph::BlastDir::Up, depth)
@@ -2043,7 +2046,8 @@ impl Server {
             impact_seen.remove(fqn);
         }
 
-        let mut impact_vec: Vec<(hoangsa_memory_graph::Node, usize)> = impact_seen.into_values().collect();
+        let mut impact_vec: Vec<(hoangsa_memory_graph::Node, usize)> =
+            impact_seen.into_values().collect();
         impact_vec.sort_by(|a, b| a.1.cmp(&b.1).then_with(|| a.0.fqn.cmp(&b.0.fqn)));
 
         let node_json = |n: &hoangsa_memory_graph::Node| {
@@ -2070,7 +2074,8 @@ impl Server {
         // pre-check (200+ nodes) doesn't drown the agent in output —
         // structured `data.impact` still carries the full set for
         // programmatic consumers (CLI --json).
-        let output_cfg = hoangsa_memory_retrieve::OutputConfig::load_or_default(&self.inner.root).await;
+        let output_cfg =
+            hoangsa_memory_retrieve::OutputConfig::load_or_default(&self.inner.root).await;
         let group_threshold = output_cfg.impact_group_threshold.max(1);
         let group_impact = impact_vec.len() > group_threshold;
 
@@ -2079,7 +2084,11 @@ impl Server {
             touched.len(),
             file_hits.len(),
             impact_vec.len(),
-            if group_impact { " (grouped by file)" } else { "" },
+            if group_impact {
+                " (grouped by file)"
+            } else {
+                ""
+            },
         );
         text.push_str("touched:\n");
         for n in touched.values() {
@@ -3532,12 +3541,7 @@ pub(crate) async fn handle_socket_conn(
 
     loop {
         line.clear();
-        let n = match tokio::time::timeout(
-            SOCKET_IDLE_TIMEOUT,
-            reader.read_line(&mut line),
-        )
-        .await
-        {
+        let n = match tokio::time::timeout(SOCKET_IDLE_TIMEOUT, reader.read_line(&mut line)).await {
             Ok(res) => res?,
             Err(_) => {
                 debug!(
@@ -3593,9 +3597,7 @@ mod index_mutex {
         // and both would re-parse every file.
         let src_dir = tempdir().unwrap();
         for i in 0..10 {
-            let body = format!(
-                "pub fn item_{i}(x: i32) -> i32 {{ x + {i} }}\n"
-            );
+            let body = format!("pub fn item_{i}(x: i32) -> i32 {{ x + {i} }}\n");
             tokio::fs::write(src_dir.path().join(format!("m_{i}.rs")), body)
                 .await
                 .unwrap();

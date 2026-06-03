@@ -16,6 +16,7 @@ consistent.
 | Command | Purpose |
 |---------|---------|
 | `hoangsa-cli install --global \| --local` | First-time setup: stage templates, register MCP, seed rules, wire Claude Code hooks |
+| `hoangsa-cli install --target codex --global \| --local` | Register `hoangsa-memory-mcp` in Codex config |
 | `hoangsa-cli session init \| status \| …` | HOANGSA session lifecycle |
 | `hoangsa-cli rule list \| add \| remove \| sync` | Project rule engine (CLAUDE.md guards) |
 | `hoangsa-cli pref get \| set` | Project preferences (`.hoangsa/config.json`) |
@@ -40,8 +41,26 @@ curl -fsSL https://github.com/pirumu/hoangsa/releases/latest/download/install.sh
 ```
 
 See [the root README install section](../../README.md#installation) for
-flags (`--global`, `--local`, `--no-embed`, `--dry-run`) and environment
+flags (`--global`, `--local`, `--target`, `--no-embed`, `--dry-run`) and environment
 overrides.
+
+Codex memory mode is available through:
+
+```sh
+hoangsa-cli install --target codex --global
+hoangsa-cli install --target codex --local
+hoangsa-cli install --target both --local
+```
+
+`--target codex` writes only Codex MCP config:
+
+- global: `~/.codex/config.toml`
+- local: `<project>/.codex/config.toml`
+
+It preserves other TOML config and existing MCP servers, writes
+`startup_timeout_sec = 20`, `tool_timeout_sec = 120`, and sets
+`RUST_LOG = "info"` for `hoangsa-memory`. It does not set a global
+`HOANGSA_MEMORY_ROOT`.
 
 **Contributors** building from a checkout:
 
