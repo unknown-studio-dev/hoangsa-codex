@@ -45,6 +45,7 @@ fn install_cmd(home: &Path, cwd: &Path) -> Command {
         .env_remove("HOANGSA_INSTALL_DIR")
         .env_remove("HOANGSA_NO_PATH_EDIT")
         .env_remove("CLAUDE_CONFIG_DIR")
+        .env_remove("CODEX_HOME")
         .current_dir(cwd);
     cmd
 }
@@ -312,6 +313,67 @@ fn dry_run_local_references_cwd_paths() {
         "local mode must plan at least one action under cwd ({:?}); got: {v}",
         cwd.path()
     );
+}
+
+#[test]
+fn dry_run_codex_global_has_no_claude_writes() {
+    let (home, cwd) = tmp_home_cwd();
+
+    let out = run(install_cmd(home.path(), cwd.path()).args([
+        "--target",
+        "codex",
+        "--global",
+        "--dry-run",
+    ]));
+    let v = expect_success_json(&out, "dry-run codex global");
+    assert_eq!(v["target"], "codex", "expected target=codex; got: {v}");
+    let actions = v["actions"].as_array().expect("actions array");
+    assert!(
+        actions.iter().any(|a| {
+            a.get("action").and_then(|s| s.as_str()) == Some("register_codex_mcp_global")
+        }),
+        "codex global dry-run must plan Codex MCP config write; got: {v}"
+    );
+    for p in collect_action_paths(actions) {
+        let s = p.display().to_string();
+        assert!(
+            !s.contains(".claude") && !s.ends_with(".mcp.json"),
+            "codex global dry-run must not plan Claude writes; got path {s}"
+        );
+    }
+}
+
+#[test]
+fn dry_run_codex_local_targets_project_codex_config() {
+    let (home, cwd) = tmp_home_cwd();
+
+    let out = run(install_cmd(home.path(), cwd.path()).args([
+        "--target",
+        "codex",
+        "--local",
+        "--dry-run",
+    ]));
+    let v = expect_success_json(&out, "dry-run codex local");
+    let actions = v["actions"].as_array().expect("actions array");
+    let codex_config = fs::canonicalize(cwd.path())
+        .unwrap_or_else(|_| cwd.path().to_path_buf())
+        .join(".codex")
+        .join("config.toml");
+    assert!(
+        actions.iter().any(|a| {
+            a.get("target")
+                .and_then(|s| s.as_str())
+                .is_some_and(|s| s == codex_config.display().to_string())
+        }),
+        "codex local dry-run must target project .codex/config.toml; got: {v}"
+    );
+    for p in collect_action_paths(actions) {
+        let s = p.display().to_string();
+        assert!(
+            !s.contains(".claude") && !s.ends_with(".mcp.json"),
+            "codex local dry-run must not plan Claude writes; got path {s}"
+        );
+    }
 }
 
 // ─── 8. live --global preserves existing mcpServers entries (REQ-08) ─────
@@ -647,9 +709,14 @@ fn live_codex_local_installs_memory_skills_and_agents_guidance() {
     let (home, cwd) = tmp_home_cwd();
     let staging = tempfile::tempdir().expect("staging tempdir");
     let templates = seed_memory_skill_templates(staging.path());
+    let install_dir = tempfile::tempdir().expect("install_dir tempdir");
+    let bin_dir = install_dir.path().join("bin");
+    fs::create_dir_all(&bin_dir).expect("mkdir bin");
+    fs::write(bin_dir.join("hoangsa-memory-mcp"), "#!/bin/sh\n").expect("write fake bin");
 
     let out = run(install_cmd(home.path(), cwd.path())
         .env("HOANGSA_TEMPLATES_DIR", &templates)
+        .env("HOANGSA_INSTALL_DIR", install_dir.path())
         .args(["--local", "--target", "codex", "--no-memory"]));
     let v = expect_success_json(&out, "live codex local");
 

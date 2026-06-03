@@ -232,15 +232,15 @@ All hooks read a JSON payload on stdin (per Claude Code hook contract)
 and emit a decision/approve JSON on stdout."
         }
         "install" => {
-            "install — install hoangsa-cli + hooks into ~/.hoangsa or ./.claude.
+            "install — install HOANGSA for Claude Code and/or Codex memory MCP.
 
 Usage:
   hoangsa-cli install [flags]
 
 Flags:
-  --global            Install into ~/.hoangsa (default)
-  --local             Install into ./.claude (project-local)
-  --target=<claude|codex|both>  Install agent guidance/skills target; default is claude
+  --global            Install globally for this user (default)
+  --local             Install for the current project
+  --target=<claude|codex|both>  Install target; default is claude
   --dry-run           Print actions without writing
   --task-manager=<clickup|asana|none>  Pre-select task manager integration
   --no-memory         Skip hoangsa-memory MCP daemon install

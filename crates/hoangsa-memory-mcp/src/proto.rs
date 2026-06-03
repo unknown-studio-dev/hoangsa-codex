@@ -132,6 +132,8 @@ pub struct InitializeResult {
     /// Server identity.
     #[serde(rename = "serverInfo")]
     pub server_info: ServerInfo,
+    /// Server-wide usage guidance for MCP clients that surface instructions.
+    pub instructions: &'static str,
 }
 
 /// Capability block returned from `initialize`.
