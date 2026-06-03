@@ -1,6 +1,5 @@
 //! `hoangsa-cli memory-guidance sync` — seed project-level CLAUDE.md /
-//! AGENTS.md pointers to a canonical memory-guidance document so Claude
-//! Code and subagents know this project runs hoangsa-memory at SessionStart.
+//! AGENTS.md guidance so agents know this project runs hoangsa-memory.
 //!
 //! The CLI only maintains the **pointer** block between
 //! `<!-- hoangsa-memory-start -->` / `<!-- hoangsa-memory-end -->` markers,
@@ -76,9 +75,16 @@ memory.
 - Config: `.hoangsa/memory/config.toml` (memory mode, caps, policy).
 "#;
 
-/// Pointer block inserted into project `CLAUDE.md` and `AGENTS.md`. Uses
-/// Claude Code's `@path` import syntax so the full guidance loads at
-/// SessionStart without bloating the root instruction file.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GuidanceTarget {
+    Claude,
+    Codex,
+    Both,
+}
+
+/// Pointer block inserted into project `CLAUDE.md`. Uses Claude Code's
+/// `@path` import syntax so the full guidance loads at SessionStart without
+/// bloating the root instruction file.
 fn pointer_block() -> String {
     format!(
         "{START_MARKER}\n\
@@ -91,6 +97,25 @@ and a semantic code graph. Before non-trivial edits, call `memory_recall` / \
 durable.\n\
 \n\
 Full protocol: @{GUIDANCE_REL_PATH}\n\
+{END_MARKER}"
+    )
+}
+
+fn codex_agents_block() -> String {
+    format!(
+        "{START_MARKER}\n\
+## Hoangsa Memory\n\
+\n\
+When the `hoangsa-memory` MCP server is available, use it before non-trivial \
+code edits or factual claims about a repository.\n\
+\n\
+Start with `memory_wakeup` or `memory_recall`. Before changing a known \
+symbol, use `memory_impact`. After durable discoveries, persist only \
+specific, non-obvious facts or lessons with `memory_remember_fact`, \
+`memory_remember_lesson`, or `memory_remember_preference`.\n\
+\n\
+Do not invent APIs, file locations, or project conventions when Hoangsa \
+recall can verify them.\n\
 {END_MARKER}"
     )
 }
@@ -152,11 +177,18 @@ pub struct SyncReport {
 /// Silent sync — no stdout output. Returns a report. Callers embed or
 /// print the result as they see fit. Used by `cmd_install` to fold
 /// guidance sync into its own JSON output.
-pub fn sync(project_dir: &Path) -> std::io::Result<SyncReport> {
+pub fn sync_for_target(project_dir: &Path, target: GuidanceTarget) -> std::io::Result<SyncReport> {
     let body_changed = write_guidance_body(project_dir)?;
-    let block = pointer_block();
-    let claude_changed = upsert_marker_block(&project_dir.join("CLAUDE.md"), &block)?;
-    let agents_changed = upsert_marker_block(&project_dir.join("AGENTS.md"), &block)?;
+    let claude_changed = if matches!(target, GuidanceTarget::Claude | GuidanceTarget::Both) {
+        upsert_marker_block(&project_dir.join("CLAUDE.md"), &pointer_block())?
+    } else {
+        false
+    };
+    let agents_changed = if matches!(target, GuidanceTarget::Codex | GuidanceTarget::Both) {
+        upsert_marker_block(&project_dir.join("AGENTS.md"), &codex_agents_block())?
+    } else {
+        false
+    };
 
     Ok(SyncReport {
         guidance_path: project_dir.join(GUIDANCE_REL_PATH),
@@ -164,6 +196,10 @@ pub fn sync(project_dir: &Path) -> std::io::Result<SyncReport> {
         claude_md_updated: claude_changed,
         agents_md_updated: agents_changed,
     })
+}
+
+pub fn sync(project_dir: &Path) -> std::io::Result<SyncReport> {
+    sync_for_target(project_dir, GuidanceTarget::Both)
 }
 
 pub fn cmd_sync(project_dir: &str) -> Result<(), Box<dyn std::error::Error>> {
@@ -201,7 +237,21 @@ mod tests {
 
         let agents = fs::read_to_string(dir.path().join("AGENTS.md")).unwrap();
         assert!(agents.contains(START_MARKER));
-        assert!(agents.contains(&format!("@{GUIDANCE_REL_PATH}")));
+        assert!(agents.contains("## Hoangsa Memory"));
+        assert!(agents.contains("memory_wakeup"));
+        assert!(!agents.contains(&format!("@{GUIDANCE_REL_PATH}")));
+    }
+
+    #[test]
+    fn codex_sync_writes_only_agents_with_self_contained_block() {
+        let dir = TempDir::new().unwrap();
+        sync_for_target(dir.path(), GuidanceTarget::Codex).unwrap();
+
+        assert!(!dir.path().join("CLAUDE.md").exists());
+        let agents = fs::read_to_string(dir.path().join("AGENTS.md")).unwrap();
+        assert!(agents.contains("## Hoangsa Memory"));
+        assert!(agents.contains("memory_recall"));
+        assert!(!agents.contains(&format!("@{GUIDANCE_REL_PATH}")));
     }
 
     #[test]
@@ -222,9 +272,7 @@ mod tests {
     fn sync_replaces_block_between_existing_markers_idempotently() {
         let dir = TempDir::new().unwrap();
         let claude_path = dir.path().join("CLAUDE.md");
-        let stale = format!(
-            "# Project\n\n{START_MARKER}\nSTALE CONTENT\n{END_MARKER}\n\nafter\n"
-        );
+        let stale = format!("# Project\n\n{START_MARKER}\nSTALE CONTENT\n{END_MARKER}\n\nafter\n");
         fs::write(&claude_path, &stale).unwrap();
 
         cmd_sync(dir.path().to_str().unwrap()).unwrap();

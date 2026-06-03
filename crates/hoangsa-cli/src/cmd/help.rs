@@ -240,6 +240,7 @@ Usage:
 Flags:
   --global            Install into ~/.hoangsa (default)
   --local             Install into ./.claude (project-local)
+  --target=<claude|codex|both>  Install agent guidance/skills target; default is claude
   --dry-run           Print actions without writing
   --task-manager=<clickup|asana|none>  Pre-select task manager integration
   --no-memory         Skip hoangsa-memory MCP daemon install

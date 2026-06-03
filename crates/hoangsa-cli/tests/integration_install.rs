@@ -57,9 +57,7 @@ fn parse_stdout(out: &Output) -> Value {
     let stdout = String::from_utf8_lossy(&out.stdout);
     serde_json::from_str(&stdout).unwrap_or_else(|e| {
         let stderr = String::from_utf8_lossy(&out.stderr);
-        panic!(
-            "stdout must be valid JSON (parse error: {e})\nstdout: {stdout}\nstderr: {stderr}"
-        )
+        panic!("stdout must be valid JSON (parse error: {e})\nstdout: {stdout}\nstderr: {stderr}")
     })
 }
 
@@ -97,6 +95,37 @@ fn seed_templates(root: &Path) -> PathBuf {
     templates
 }
 
+fn seed_memory_skill_templates(root: &Path) -> PathBuf {
+    let templates = seed_templates(root);
+    let skills = [
+        "memory-discipline",
+        "memory-reflect",
+        "memory-guide",
+        "memory-impact-analysis",
+        "memory-exploring",
+        "memory-debugging",
+        "memory-refactoring",
+        "memory-cli",
+        "git-flow",
+        "visual-debug",
+    ];
+    for skill in skills {
+        let path = templates
+            .join("skills")
+            .join("hoangsa")
+            .join(skill)
+            .join("SKILL.md");
+        fs::create_dir_all(path.parent().expect("skill parent")).expect("create skill dir");
+        let body = if skill == "memory-cli" {
+            "# memory-cli\n\nUses .claude/settings.json, .mcp.json, and ~/.claude/skills/.\n"
+        } else {
+            "# memory skill\n"
+        };
+        fs::write(path, body).expect("write skill");
+    }
+    templates
+}
+
 /// Walk every path-shaped string in an `actions` array. Used by the
 /// cwd-leak guard tests.
 fn collect_action_paths(actions: &[Value]) -> Vec<PathBuf> {
@@ -111,6 +140,16 @@ fn collect_action_paths(actions: &[Value]) -> Vec<PathBuf> {
     out
 }
 
+fn action_names(v: &Value) -> Vec<String> {
+    v["actions"]
+        .as_array()
+        .expect("actions array")
+        .iter()
+        .filter_map(|a| a.get("action").and_then(|v| v.as_str()))
+        .map(ToString::to_string)
+        .collect()
+}
+
 // ─── 1. dry-run global mode ──────────────────────────────────────────────
 
 #[test]
@@ -120,7 +159,10 @@ fn dry_run_global_emits_mode_global() {
     let out = run(install_cmd(home.path(), cwd.path()).args(["--global", "--dry-run"]));
     let v = expect_success_json(&out, "dry-run global");
     assert_eq!(v["mode"], "global", "expected mode=global; got: {v}");
-    assert!(v["actions"].is_array(), "actions must be an array; got: {v}");
+    assert!(
+        v["actions"].is_array(),
+        "actions must be an array; got: {v}"
+    );
 }
 
 // ─── 2. dry-run local mode ───────────────────────────────────────────────
@@ -132,6 +174,37 @@ fn dry_run_local_emits_mode_local() {
     let out = run(install_cmd(home.path(), cwd.path()).args(["--local", "--dry-run"]));
     let v = expect_success_json(&out, "dry-run local");
     assert_eq!(v["mode"], "local", "expected mode=local; got: {v}");
+}
+
+#[test]
+fn dry_run_codex_local_plans_agents_skills_and_guidance_only() {
+    let (home, cwd) = tmp_home_cwd();
+    let staging = tempfile::tempdir().expect("staging tempdir");
+    let templates = seed_memory_skill_templates(staging.path());
+
+    let out = run(install_cmd(home.path(), cwd.path())
+        .env("HOANGSA_TEMPLATES_DIR", &templates)
+        .args(["--local", "--target", "codex", "--dry-run"]));
+    let v = expect_success_json(&out, "dry-run codex local");
+
+    assert_eq!(v["target"], "codex");
+    let names = action_names(&v);
+    assert!(names.contains(&"install_codex_memory_skills".to_string()));
+    assert!(names.contains(&"sync_codex_guidance".to_string()));
+    assert!(!names.contains(&"register_mcp_local".to_string()));
+    assert!(!names.contains(&"merge_settings".to_string()));
+
+    let codex_action = v["actions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|a| a["action"] == "install_codex_memory_skills")
+        .expect("codex skills action");
+    let target = codex_action["target"].as_str().expect("target");
+    assert!(
+        target.ends_with(".agents/skills/hoangsa"),
+        "codex local skills target must be .agents/skills/hoangsa; got: {target}"
+    );
 }
 
 // ─── 4. --global + --local rejected (REQ-15) ─────────────────────────────
@@ -257,8 +330,11 @@ fn mcp_merge_preserves_existing_global() {
             "other": { "command": "/usr/local/bin/other-mcp", "args": [] }
         }
     });
-    fs::write(&claude_json, serde_json::to_string_pretty(&seed).expect("encode"))
-        .expect("write seed claude.json");
+    fs::write(
+        &claude_json,
+        serde_json::to_string_pretty(&seed).expect("encode"),
+    )
+    .expect("write seed claude.json");
 
     // Live install: --global --no-memory so we skip bin relocation entirely.
     let out = run(install_cmd(home.path(), cwd.path())
@@ -424,7 +500,10 @@ fn task_manager_flag_accepted_space_and_equals() {
         "space form must record clickup; got: {v_space}"
     );
 
-    let v_eq = assert_accepted("equals", &["--global", "--dry-run", "--task-manager=clickup"]);
+    let v_eq = assert_accepted(
+        "equals",
+        &["--global", "--dry-run", "--task-manager=clickup"],
+    );
     assert_eq!(
         v_eq["flags"]["task_manager"], "clickup",
         "equals form must record clickup; got: {v_eq}"
@@ -553,14 +632,56 @@ fn local_install_seeds_memory_guidance_pointer() {
         claude.contains("<!-- hoangsa-memory-start -->"),
         "CLAUDE.md must carry the hoangsa-memory pointer block; got: {claude}"
     );
-    let agents = fs::read_to_string(cwd.path().join("AGENTS.md"))
-        .expect("AGENTS.md should exist after install");
     assert!(
-        agents.contains("<!-- hoangsa-memory-start -->"),
-        "AGENTS.md must carry the hoangsa-memory pointer block; got: {agents}"
+        !cwd.path().join("AGENTS.md").exists(),
+        "default Claude target should not write Codex AGENTS.md guidance"
     );
     assert!(
         cwd.path().join(".hoangsa/memory-guidance.md").exists(),
         ".hoangsa/memory-guidance.md body must be written by sync"
     );
+}
+
+#[test]
+fn live_codex_local_installs_memory_skills_and_agents_guidance() {
+    let (home, cwd) = tmp_home_cwd();
+    let staging = tempfile::tempdir().expect("staging tempdir");
+    let templates = seed_memory_skill_templates(staging.path());
+
+    let out = run(install_cmd(home.path(), cwd.path())
+        .env("HOANGSA_TEMPLATES_DIR", &templates)
+        .args(["--local", "--target", "codex", "--no-memory"]));
+    let v = expect_success_json(&out, "live codex local");
+
+    assert_eq!(v["target"], "codex");
+    let skills_root = cwd.path().join(".agents/skills/hoangsa");
+    for skill in [
+        "memory-discipline",
+        "memory-reflect",
+        "memory-guide",
+        "memory-impact-analysis",
+        "memory-exploring",
+        "memory-debugging",
+        "memory-refactoring",
+        "memory-cli",
+    ] {
+        assert!(
+            skills_root.join(skill).join("SKILL.md").exists(),
+            "missing installed Codex memory skill: {skill}"
+        );
+    }
+    assert!(!skills_root.join("git-flow").exists());
+    assert!(!skills_root.join("visual-debug").exists());
+
+    let cli_skill = fs::read_to_string(skills_root.join("memory-cli/SKILL.md")).unwrap();
+    assert!(cli_skill.contains(".codex/config.toml"));
+    assert!(cli_skill.contains(".agents/skills/hoangsa"));
+    assert!(!cli_skill.contains(".mcp.json"));
+    assert!(!cli_skill.contains("~/.claude/skills"));
+
+    let agents = fs::read_to_string(cwd.path().join("AGENTS.md")).unwrap();
+    assert!(agents.contains("## Hoangsa Memory"));
+    assert!(agents.contains("memory_wakeup"));
+    assert!(!agents.contains("@.hoangsa/memory-guidance.md"));
+    assert!(!cwd.path().join("CLAUDE.md").exists());
 }
