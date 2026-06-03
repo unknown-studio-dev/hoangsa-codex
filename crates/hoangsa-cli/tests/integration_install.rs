@@ -45,6 +45,7 @@ fn install_cmd(home: &Path, cwd: &Path) -> Command {
         .env_remove("HOANGSA_INSTALL_DIR")
         .env_remove("HOANGSA_NO_PATH_EDIT")
         .env_remove("CLAUDE_CONFIG_DIR")
+        .env_remove("CODEX_HOME")
         .current_dir(cwd);
     cmd
 }
@@ -57,9 +58,7 @@ fn parse_stdout(out: &Output) -> Value {
     let stdout = String::from_utf8_lossy(&out.stdout);
     serde_json::from_str(&stdout).unwrap_or_else(|e| {
         let stderr = String::from_utf8_lossy(&out.stderr);
-        panic!(
-            "stdout must be valid JSON (parse error: {e})\nstdout: {stdout}\nstderr: {stderr}"
-        )
+        panic!("stdout must be valid JSON (parse error: {e})\nstdout: {stdout}\nstderr: {stderr}")
     })
 }
 
@@ -120,7 +119,10 @@ fn dry_run_global_emits_mode_global() {
     let out = run(install_cmd(home.path(), cwd.path()).args(["--global", "--dry-run"]));
     let v = expect_success_json(&out, "dry-run global");
     assert_eq!(v["mode"], "global", "expected mode=global; got: {v}");
-    assert!(v["actions"].is_array(), "actions must be an array; got: {v}");
+    assert!(
+        v["actions"].is_array(),
+        "actions must be an array; got: {v}"
+    );
 }
 
 // ─── 2. dry-run local mode ───────────────────────────────────────────────
@@ -241,6 +243,67 @@ fn dry_run_local_references_cwd_paths() {
     );
 }
 
+#[test]
+fn dry_run_codex_global_has_no_claude_writes() {
+    let (home, cwd) = tmp_home_cwd();
+
+    let out = run(install_cmd(home.path(), cwd.path()).args([
+        "--target",
+        "codex",
+        "--global",
+        "--dry-run",
+    ]));
+    let v = expect_success_json(&out, "dry-run codex global");
+    assert_eq!(v["target"], "codex", "expected target=codex; got: {v}");
+    let actions = v["actions"].as_array().expect("actions array");
+    assert!(
+        actions.iter().any(|a| {
+            a.get("action").and_then(|s| s.as_str()) == Some("register_codex_mcp_global")
+        }),
+        "codex global dry-run must plan Codex MCP config write; got: {v}"
+    );
+    for p in collect_action_paths(actions) {
+        let s = p.display().to_string();
+        assert!(
+            !s.contains(".claude") && !s.ends_with(".mcp.json"),
+            "codex global dry-run must not plan Claude writes; got path {s}"
+        );
+    }
+}
+
+#[test]
+fn dry_run_codex_local_targets_project_codex_config() {
+    let (home, cwd) = tmp_home_cwd();
+
+    let out = run(install_cmd(home.path(), cwd.path()).args([
+        "--target",
+        "codex",
+        "--local",
+        "--dry-run",
+    ]));
+    let v = expect_success_json(&out, "dry-run codex local");
+    let actions = v["actions"].as_array().expect("actions array");
+    let codex_config = fs::canonicalize(cwd.path())
+        .unwrap_or_else(|_| cwd.path().to_path_buf())
+        .join(".codex")
+        .join("config.toml");
+    assert!(
+        actions.iter().any(|a| {
+            a.get("target")
+                .and_then(|s| s.as_str())
+                .is_some_and(|s| s == codex_config.display().to_string())
+        }),
+        "codex local dry-run must target project .codex/config.toml; got: {v}"
+    );
+    for p in collect_action_paths(actions) {
+        let s = p.display().to_string();
+        assert!(
+            !s.contains(".claude") && !s.ends_with(".mcp.json"),
+            "codex local dry-run must not plan Claude writes; got path {s}"
+        );
+    }
+}
+
 // ─── 8. live --global preserves existing mcpServers entries (REQ-08) ─────
 
 #[test]
@@ -257,8 +320,11 @@ fn mcp_merge_preserves_existing_global() {
             "other": { "command": "/usr/local/bin/other-mcp", "args": [] }
         }
     });
-    fs::write(&claude_json, serde_json::to_string_pretty(&seed).expect("encode"))
-        .expect("write seed claude.json");
+    fs::write(
+        &claude_json,
+        serde_json::to_string_pretty(&seed).expect("encode"),
+    )
+    .expect("write seed claude.json");
 
     // Live install: --global --no-memory so we skip bin relocation entirely.
     let out = run(install_cmd(home.path(), cwd.path())
@@ -424,7 +490,10 @@ fn task_manager_flag_accepted_space_and_equals() {
         "space form must record clickup; got: {v_space}"
     );
 
-    let v_eq = assert_accepted("equals", &["--global", "--dry-run", "--task-manager=clickup"]);
+    let v_eq = assert_accepted(
+        "equals",
+        &["--global", "--dry-run", "--task-manager=clickup"],
+    );
     assert_eq!(
         v_eq["flags"]["task_manager"], "clickup",
         "equals form must record clickup; got: {v_eq}"

@@ -55,6 +55,7 @@ curl -fsSL https://github.com/pirumu/hoangsa/releases/latest/download/install.sh
 |------|--------|
 | `--global` | Install globally for this user (default) — writes to the resolved Claude config dir |
 | `--local` | Install for the current project only — writes to `./.claude/` |
+| `--target claude\|codex\|both` | Select the install target. Default is `claude`; `codex` configures memory MCP only. |
 | `--no-embed` | Skip pre-downloading the `multilingual-e5-small` weights (~118 MB). They will fetch lazily on first `index` / `query` / `archive ingest`. Useful on bandwidth-constrained links. |
 | `--dry-run` | Print actions without writing files — good for auditing |
 | `--help` | Show the installer help |
@@ -70,6 +71,10 @@ curl -fsSL https://github.com/pirumu/hoangsa/releases/latest/download/install.sh
 
 # Dry-run to see what would happen
 curl -fsSL https://github.com/pirumu/hoangsa/releases/latest/download/install.sh | sh -s -- --dry-run
+
+# Codex memory MCP only
+hoangsa-cli install --target codex --global
+hoangsa-cli install --target codex --local
 
 # Pin a specific version
 HOANGSA_VERSION=v0.2.2 curl -fsSL https://github.com/pirumu/hoangsa/releases/download/v0.2.2/install.sh | sh
@@ -121,6 +126,40 @@ This drops binaries into `~/.cargo/bin/`. Note that `cargo install`
 alone **does not** register MCP servers, copy templates, or wire Claude
 Code hooks — run `hoangsa-cli install --global` afterwards to finish
 setup.
+
+---
+
+### Codex memory mode
+
+Codex support currently targets `hoangsa-memory-mcp` only. It does not
+install Claude slash commands, Claude hooks, or Claude agent templates.
+
+```sh
+hoangsa-cli install --target codex --global
+hoangsa-cli install --target codex --local
+hoangsa-cli install --target both --local
+```
+
+Global Codex installs write `~/.codex/config.toml`; local installs write
+`<project>/.codex/config.toml`:
+
+```toml
+[mcp_servers.hoangsa-memory]
+command = "/ABSOLUTE/PATH/TO/hoangsa-memory-mcp"
+args = []
+startup_timeout_sec = 20
+tool_timeout_sec = 120
+
+[mcp_servers.hoangsa-memory.env]
+RUST_LOG = "info"
+```
+
+Do not set global `HOANGSA_MEMORY_ROOT`; the MCP server resolves the
+right Hoangsa memory project from the Codex session working directory.
+Use a project-local override only when intentionally pinning one project.
+
+After installing, start Codex in the project and run `/mcp` to confirm
+that `hoangsa-memory` tools are listed.
 
 ---
 
