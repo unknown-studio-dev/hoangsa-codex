@@ -1635,6 +1635,19 @@ pub mod mode {
         "type-design-analyzer",
     ];
 
+    /// Memory discipline skills installed for Codex. This intentionally
+    /// excludes non-memory Claude skills such as `git-flow` and `visual-debug`.
+    pub const CODEX_MEMORY_SKILLS: &[&str] = &[
+        "memory-discipline",
+        "memory-reflect",
+        "memory-guide",
+        "memory-impact-analysis",
+        "memory-exploring",
+        "memory-debugging",
+        "memory-refactoring",
+        "memory-cli",
+    ];
+
     /// Standard `.memoryignore` seed written in `--local` mode when
     /// the project doesn't already carry one. Covers hoangsa-memory's own
     /// data dir, common JS/TS build output, and generated/large files.
@@ -2117,6 +2130,76 @@ pnpm-lock.yaml
     pub fn install_quality_skills() -> Result<QualitySkillsReport, String> {
         let skills_root = super::claude_config_dir()?.join("skills");
         install_quality_skills_to(&skills_root).map_err(|e| e.to_string())
+    }
+
+    #[derive(Debug, Default, Clone, PartialEq, Eq)]
+    pub struct CodexSkillsReport {
+        pub copied: Vec<PathBuf>,
+        pub skipped_missing: Vec<String>,
+    }
+
+    pub fn codex_global_skills_root() -> Result<PathBuf, String> {
+        Ok(super::home_path()?
+            .join(".agents")
+            .join("skills")
+            .join("hoangsa"))
+    }
+
+    pub fn codex_local_skills_root(cwd: &Path) -> PathBuf {
+        cwd.join(".agents").join("skills").join("hoangsa")
+    }
+
+    pub fn codex_skills_root(mode: &str, cwd: &Path) -> Result<PathBuf, String> {
+        match mode {
+            "global" => codex_global_skills_root(),
+            _ => Ok(codex_local_skills_root(cwd)),
+        }
+    }
+
+    fn codex_skill_text(raw: &str) -> String {
+        raw.replace(".claude/settings.json", "Codex config")
+            .replace("~/.claude/settings.json", "Codex global config")
+            .replace(".mcp.json", ".codex/config.toml")
+            .replace(".claude/skills/", ".agents/skills/hoangsa/")
+            .replace("~/.claude/skills/", "$HOME/.agents/skills/hoangsa/")
+            .replace(
+                "hoangsa-memory hooks + skills + MCP server",
+                "hoangsa-memory skills + MCP server",
+            )
+            .replace(
+                "Removes hoangsa-memory's managed hooks + skills + MCP entry",
+                "Removes hoangsa-memory's managed skills + MCP entry",
+            )
+    }
+
+    pub fn install_codex_memory_skills_to(
+        templates_root: &Path,
+        skills_root: &Path,
+    ) -> io::Result<CodexSkillsReport> {
+        let mut report = CodexSkillsReport::default();
+        let src_root = templates_root.join("skills").join("hoangsa");
+        fs::create_dir_all(skills_root)?;
+
+        for skill in CODEX_MEMORY_SKILLS {
+            let src = src_root.join(skill).join("SKILL.md");
+            if !src.exists() {
+                report.skipped_missing.push((*skill).to_string());
+                continue;
+            }
+            let dst = skills_root.join(skill).join("SKILL.md");
+            if let Some(parent) = dst.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            let raw = fs::read_to_string(&src)?;
+            let next = codex_skill_text(&raw);
+            let prev = fs::read_to_string(&dst).ok();
+            if prev.as_deref() != Some(next.as_str()) {
+                fs::write(&dst, next)?;
+                report.copied.push(dst);
+            }
+        }
+
+        Ok(report)
     }
 
     #[cfg(test)]
@@ -2784,6 +2867,25 @@ pub fn cmd_install(args: &[&str]) {
         }
 
         if flags.target.includes_codex() {
+            match (
+                templates::templates_source_dir(mode, &cwd),
+                mode::codex_skills_root(mode, &cwd),
+            ) {
+                (Ok(src), Ok(dst)) => {
+                    actions_json.push(json!({
+                        "action": "install_codex_memory_skills",
+                        "target": dst,
+                        "skills": mode::CODEX_MEMORY_SKILLS,
+                        "source": src.join("skills").join("hoangsa"),
+                    }));
+                    actions_json.push(json!({
+                        "action": "sync_codex_guidance",
+                        "target": cwd.join("AGENTS.md"),
+                    }));
+                }
+                (Err(e), _) => warnings.push(e),
+                (_, Err(e)) => warnings.push(e),
+            }
             match mode {
                 "global" => match mode::codex_global_config_path() {
                     Ok(p) => actions_json.push(json!({
@@ -2818,17 +2920,19 @@ pub fn cmd_install(args: &[&str]) {
             "targets": {
                 "global_claude_json": "~/.claude.json",
                 "global_codex_config": "~/.codex/config.toml",
+                "global_codex_skills": "~/.agents/skills/hoangsa/",
                 "local_claude_dir": ".claude/",
                 "local_codex_config": ".codex/config.toml",
+                "local_codex_skills": ".agents/skills/hoangsa/",
                 "memory_bin_dir": "~/.hoangsa/bin/",
                 "manifest": "~/.hoangsa/manifest.json"
             },
             "flags": {
                 "global": flags.global,
                 "local": flags.local,
+                "target": flags.target.as_str(),
                 "no_memory": flags.no_memory,
                 "skip_path_edit": flags.skip_path_edit,
-                "target": flags.target.as_str(),
                 "task_manager": flags.task_manager
             }
         });
@@ -2838,6 +2942,37 @@ pub fn cmd_install(args: &[&str]) {
 
     if !flags.target.includes_claude() {
         let mut warnings: Vec<String> = Vec::new();
+        let src = match templates::templates_source_dir(mode, &cwd) {
+            Ok(p) => p,
+            Err(e) => {
+                eprintln!("install: {e}");
+                std::process::exit(1);
+            }
+        };
+
+        let (codex_skills_root, codex_skills_copied, codex_skills_skipped_missing) =
+            match mode::codex_skills_root(mode, &cwd) {
+                Ok(root) => match mode::install_codex_memory_skills_to(&src, &root) {
+                    Ok(r) => {
+                        if !r.skipped_missing.is_empty() {
+                            warnings.push(format!(
+                                "codex_memory_skills missing templates: {}",
+                                r.skipped_missing.join(", ")
+                            ));
+                        }
+                        (Some(root), r.copied, r.skipped_missing)
+                    }
+                    Err(e) => {
+                        eprintln!("install: install_codex_memory_skills: {e}");
+                        std::process::exit(1);
+                    }
+                },
+                Err(e) => {
+                    eprintln!("install: {e}");
+                    std::process::exit(1);
+                }
+            };
+
         let mcp_target = match mode {
             "global" => {
                 if let Err(e) = mode::register_codex_mcp_global() {
@@ -2861,13 +2996,29 @@ pub fn cmd_install(args: &[&str]) {
             }
             _ => None,
         };
+
+        let (guidance_synced, guidance_report) =
+            match super::guidance::sync_for_target(&cwd, super::guidance::GuidanceTarget::Codex) {
+                Ok(r) => (true, Some(r)),
+                Err(e) => {
+                    warnings.push(format!("memory-guidance sync failed: {e}"));
+                    (false, None)
+                }
+            };
         let status = if warnings.is_empty() { "ok" } else { "partial" };
         helpers::out(&json!({
             "status": status,
             "warnings": warnings,
             "mode": mode,
             "target": flags.target.as_str(),
-            "mcp_target": mcp_target,
+            "mcp_target": mcp_target.clone(),
+            "codex_mcp_target": mcp_target,
+            "codex_skills_root": codex_skills_root,
+            "codex_skills_copied": codex_skills_copied,
+            "codex_skills_skipped_missing": codex_skills_skipped_missing,
+            "memory_guidance_synced": guidance_synced,
+            "memory_guidance_claude_updated": guidance_report.as_ref().map(|r| r.claude_md_updated),
+            "memory_guidance_agents_updated": guidance_report.as_ref().map(|r| r.agents_md_updated),
         }));
         return;
     }
@@ -2900,24 +3051,28 @@ pub fn cmd_install(args: &[&str]) {
         }
     };
 
-    let prev = match templates::load_manifest(&manifest_path) {
-        Ok(m) => m,
-        Err(e) => {
-            eprintln!("install: {e}");
-            std::process::exit(1);
-        }
-    };
-    let (report, new_manifest) = match templates::copy_templates(&src, &dst, &prev) {
-        Ok(r) => r,
-        Err(e) => {
-            eprintln!("install: copy_templates failed: {e}");
-            std::process::exit(1);
-        }
-    };
+    let mut report = templates::CopyReport::default();
+    if flags.target.includes_claude() {
+        let prev = match templates::load_manifest(&manifest_path) {
+            Ok(m) => m,
+            Err(e) => {
+                eprintln!("install: {e}");
+                std::process::exit(1);
+            }
+        };
+        let (copy_report, new_manifest) = match templates::copy_templates(&src, &dst, &prev) {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("install: copy_templates failed: {e}");
+                std::process::exit(1);
+            }
+        };
+        report = copy_report;
 
-    if let Err(e) = templates::save_manifest(&manifest_path, &new_manifest) {
-        eprintln!("install: save_manifest failed: {e}");
-        std::process::exit(1);
+        if let Err(e) = templates::save_manifest(&manifest_path, &new_manifest) {
+            eprintln!("install: save_manifest failed: {e}");
+            std::process::exit(1);
+        }
     }
 
     // T-06: relocate `hoangsa-memory` + `hoangsa-memory-mcp` into
@@ -2948,35 +3103,42 @@ pub fn cmd_install(args: &[&str]) {
 
     // T-04: settings.json merge + statusline + legacy cleanup.
     // `dst` is already the `.claude/` dir — hooks/statusline want it verbatim.
-    let target_dir = dst.clone();
-    let settings_file = match hooks::settings_path(mode, &cwd) {
-        Ok(p) => p,
-        Err(e) => {
-            eprintln!("install: {e}");
+    let mut settings_file: Option<PathBuf> = None;
+    let mut settings_backup: Option<PathBuf> = None;
+    let mut hooks_added = 0usize;
+    let mut statusline_set = false;
+    if flags.target.includes_claude() {
+        let target_dir = dst.clone();
+        let path = match hooks::settings_path(mode, &cwd) {
+            Ok(p) => p,
+            Err(e) => {
+                eprintln!("install: {e}");
+                std::process::exit(1);
+            }
+        };
+        let mut settings = match hooks::load_settings(&path) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("install: load_settings failed: {e}");
+                std::process::exit(1);
+            }
+        };
+        settings_backup = match hooks::backup_settings(&path) {
+            Ok(b) => b,
+            Err(e) => {
+                eprintln!("install: backup_settings failed: {e}");
+                std::process::exit(1);
+            }
+        };
+        let hoangsa_hooks = hooks::build_hoangsa_hooks(&target_dir);
+        hooks_added = hooks::merge_hoangsa_hooks(&mut settings, &hoangsa_hooks);
+        statusline_set =
+            hooks::apply_statusline(&mut settings, &hooks::default_statusline(&target_dir));
+        if let Err(e) = hooks::save_settings(&path, &settings) {
+            eprintln!("install: save_settings failed: {e}");
             std::process::exit(1);
         }
-    };
-    let mut settings = match hooks::load_settings(&settings_file) {
-        Ok(s) => s,
-        Err(e) => {
-            eprintln!("install: load_settings failed: {e}");
-            std::process::exit(1);
-        }
-    };
-    let settings_backup = match hooks::backup_settings(&settings_file) {
-        Ok(b) => b,
-        Err(e) => {
-            eprintln!("install: backup_settings failed: {e}");
-            std::process::exit(1);
-        }
-    };
-    let hoangsa_hooks = hooks::build_hoangsa_hooks(&target_dir);
-    let hooks_added = hooks::merge_hoangsa_hooks(&mut settings, &hoangsa_hooks);
-    let statusline_set =
-        hooks::apply_statusline(&mut settings, &hooks::default_statusline(&target_dir));
-    if let Err(e) = hooks::save_settings(&settings_file, &settings) {
-        eprintln!("install: save_settings failed: {e}");
-        std::process::exit(1);
+        settings_file = Some(path);
     }
 
     // T-05: mode-aware MCP / rules / memory_ignore / quality-skills.
@@ -2989,65 +3151,98 @@ pub fn cmd_install(args: &[&str]) {
     let mut memory_ignore_seeded = false;
     let mut quality_skills_pending: Vec<String> = Vec::new();
     let mut quality_skills_present: Vec<String> = Vec::new();
-    match mode {
-        "global" => {
-            // MCP register is a fatal step — if we can't wire memory, there's
-            // no point calling the install successful.
-            if let Err(e) = mode::register_mcp_global() {
-                eprintln!("install: register_mcp_global failed: {e}");
+    if flags.target.includes_claude() {
+        match mode {
+            "global" => {
+                // MCP register is a fatal step — if we can't wire memory, there's
+                // no point calling the install successful.
+                if let Err(e) = mode::register_mcp_global() {
+                    eprintln!("install: register_mcp_global failed: {e}");
+                    std::process::exit(1);
+                }
+                match mode::claude_json_path() {
+                    Ok(p) => mcp_target = Some(p),
+                    Err(e) => {
+                        eprintln!("install: claude_json_path: {e}");
+                        warnings.push(format!("claude_json_path: {e}"));
+                    }
+                }
+                // Quality-skills scan is optional — never block the install,
+                // but feed both the pending set and any IO failure into
+                // `warnings` so the top-level status reflects reality.
+                match mode::install_quality_skills() {
+                    Ok(r) => {
+                        if !r.pending.is_empty() {
+                            warnings.push(format!(
+                                "quality_skills pending (not auto-installed): {}",
+                                r.pending.join(", ")
+                            ));
+                        }
+                        quality_skills_pending = r.pending;
+                        quality_skills_present = r.already_present;
+                    }
+                    Err(e) => {
+                        eprintln!("install: install_quality_skills: {e}");
+                        warnings.push(format!("install_quality_skills: {e}"));
+                    }
+                }
+            }
+            "local" => {
+                if let Err(e) = mode::register_mcp_local(&cwd) {
+                    eprintln!("install: {}", e.message);
+                    std::process::exit(e.exit_code);
+                }
+                mcp_target = Some(mode::local_mcp_path(&cwd));
+                // Seed steps are optional; a failing seed must not abort the
+                // install but MUST surface via `warnings` + status=partial.
+                match mode::seed_local_rules(&cwd) {
+                    Ok(wrote) => rules_seeded = wrote,
+                    Err(e) => {
+                        eprintln!("install: seed_local_rules: {e}");
+                        warnings.push(format!("seed_local_rules: {e}"));
+                    }
+                }
+                match mode::seed_memory_ignore(&cwd) {
+                    Ok(wrote) => memory_ignore_seeded = wrote,
+                    Err(e) => {
+                        eprintln!("install: seed_memory_ignore: {e}");
+                        warnings.push(format!("seed_memory_ignore: {e}"));
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let mut codex_skills_root: Option<PathBuf> = None;
+    let mut codex_skills_copied: Vec<PathBuf> = Vec::new();
+    let mut codex_skills_skipped_missing: Vec<String> = Vec::new();
+    if flags.target.includes_codex() {
+        match mode::codex_skills_root(mode, &cwd) {
+            Ok(root) => {
+                codex_skills_root = Some(root.clone());
+                match mode::install_codex_memory_skills_to(&src, &root) {
+                    Ok(r) => {
+                        codex_skills_copied = r.copied;
+                        codex_skills_skipped_missing = r.skipped_missing;
+                        if !codex_skills_skipped_missing.is_empty() {
+                            warnings.push(format!(
+                                "codex_memory_skills missing templates: {}",
+                                codex_skills_skipped_missing.join(", ")
+                            ));
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("install: install_codex_memory_skills: {e}");
+                        std::process::exit(1);
+                    }
+                }
+            }
+            Err(e) => {
+                eprintln!("install: {e}");
                 std::process::exit(1);
             }
-            match mode::claude_json_path() {
-                Ok(p) => mcp_target = Some(p),
-                Err(e) => {
-                    eprintln!("install: claude_json_path: {e}");
-                    warnings.push(format!("claude_json_path: {e}"));
-                }
-            }
-            // Quality-skills scan is optional — never block the install,
-            // but feed both the pending set and any IO failure into
-            // `warnings` so the top-level status reflects reality.
-            match mode::install_quality_skills() {
-                Ok(r) => {
-                    if !r.pending.is_empty() {
-                        warnings.push(format!(
-                            "quality_skills pending (not auto-installed): {}",
-                            r.pending.join(", ")
-                        ));
-                    }
-                    quality_skills_pending = r.pending;
-                    quality_skills_present = r.already_present;
-                }
-                Err(e) => {
-                    eprintln!("install: install_quality_skills: {e}");
-                    warnings.push(format!("install_quality_skills: {e}"));
-                }
-            }
         }
-        "local" => {
-            if let Err(e) = mode::register_mcp_local(&cwd) {
-                eprintln!("install: {}", e.message);
-                std::process::exit(e.exit_code);
-            }
-            mcp_target = Some(mode::local_mcp_path(&cwd));
-            // Seed steps are optional; a failing seed must not abort the
-            // install but MUST surface via `warnings` + status=partial.
-            match mode::seed_local_rules(&cwd) {
-                Ok(wrote) => rules_seeded = wrote,
-                Err(e) => {
-                    eprintln!("install: seed_local_rules: {e}");
-                    warnings.push(format!("seed_local_rules: {e}"));
-                }
-            }
-            match mode::seed_memory_ignore(&cwd) {
-                Ok(wrote) => memory_ignore_seeded = wrote,
-                Err(e) => {
-                    eprintln!("install: seed_memory_ignore: {e}");
-                    warnings.push(format!("seed_memory_ignore: {e}"));
-                }
-            }
-        }
-        _ => {}
     }
 
     if flags.target.includes_codex() {
@@ -3082,17 +3277,23 @@ pub fn cmd_install(args: &[&str]) {
         .map(|r| r.skipped_missing.clone())
         .unwrap_or_default();
 
-    // Seed project-level CLAUDE.md / AGENTS.md pointer block so Claude
-    // Code + subagents know this project is memory-backed. Non-fatal —
+    // Seed target-specific project guidance so agents know this project is
+    // memory-backed. Non-fatal —
     // a sync failure warns and lets the user re-run `hoangsa-cli
     // memory-guidance sync` by hand.
-    let (guidance_synced, guidance_report) = match super::guidance::sync(&cwd) {
-        Ok(r) => (true, Some(r)),
-        Err(e) => {
-            warnings.push(format!("memory-guidance sync failed: {e}"));
-            (false, None)
-        }
+    let guidance_target = match flags.target {
+        InstallTarget::Claude => super::guidance::GuidanceTarget::Claude,
+        InstallTarget::Codex => super::guidance::GuidanceTarget::Codex,
+        InstallTarget::Both => super::guidance::GuidanceTarget::Both,
     };
+    let (guidance_synced, guidance_report) =
+        match super::guidance::sync_for_target(&cwd, guidance_target) {
+            Ok(r) => (true, Some(r)),
+            Err(e) => {
+                warnings.push(format!("memory-guidance sync failed: {e}"));
+                (false, None)
+            }
+        };
 
     // Status flips to `"partial"` whenever any non-fatal step contributed
     // a warning. Fatal steps already exited above, so reaching this point
@@ -3124,6 +3325,9 @@ pub fn cmd_install(args: &[&str]) {
         "memory_ignore_seeded": memory_ignore_seeded,
         "quality_skills_present": quality_skills_present,
         "quality_skills_pending": quality_skills_pending,
+        "codex_skills_root": codex_skills_root,
+        "codex_skills_copied": codex_skills_copied,
+        "codex_skills_skipped_missing": codex_skills_skipped_missing,
         "memory_guidance_synced": guidance_synced,
         "memory_guidance_claude_updated": guidance_report.as_ref().map(|r| r.claude_md_updated),
         "memory_guidance_agents_updated": guidance_report.as_ref().map(|r| r.agents_md_updated),
