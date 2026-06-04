@@ -227,8 +227,10 @@ Usage:
   hoangsa-cli hook state-check      Re-read enforcement state
   hoangsa-cli hook state-clear      Wipe enforcement state for the session
   hoangsa-cli hook statusline       Print statusline JSON for Claude Code
+  hoangsa-cli hook codex <event>    Normalize and handle a Codex hook payload
+  hoangsa-cli hook claude <event>   Normalize a Claude hook payload
 
-All hooks read a JSON payload on stdin (per Claude Code hook contract)
+Hooks read a JSON payload on stdin (per Claude/Codex hook contract)
 and emit a decision/approve JSON on stdout."
         }
         "install" => {

@@ -1304,6 +1304,223 @@ pub mod hooks {
     }
 }
 
+pub mod codex_hooks {
+    use super::*;
+
+    pub const MANAGED_SENTINEL: &str = "__hoangsa_managed";
+
+    pub fn hooks_path(mode: &str, cwd: &Path) -> Result<PathBuf, String> {
+        match mode {
+            "global" => Ok(super::home_path()?.join(".codex").join("hooks.json")),
+            _ => Ok(cwd.join(".codex").join("hooks.json")),
+        }
+    }
+
+    pub fn load_hooks(path: &Path) -> io::Result<Value> {
+        match fs::read_to_string(path) {
+            Ok(raw) => {
+                let v: Value = serde_json::from_str(&raw).map_err(|e| {
+                    io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!("parse hooks.json at {}: {e}", path.display()),
+                    )
+                })?;
+                Ok(if v.is_object() { v } else { json!({}) })
+            }
+            Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(json!({})),
+            Err(e) => Err(e),
+        }
+    }
+
+    pub fn save_hooks(path: &Path, hooks: &Value) -> io::Result<()> {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        let mut out = serde_json::to_string_pretty(hooks).map_err(io::Error::other)?;
+        out.push('\n');
+        fs::write(path, out)
+    }
+
+    pub fn build_hoangsa_hooks_inner(install_root: Option<&Path>) -> Value {
+        let cli = install_root
+            .map(|d| d.join("bin").join("hoangsa-cli"))
+            .unwrap_or_else(|| PathBuf::from("hoangsa-cli"))
+            .display()
+            .to_string();
+
+        let managed_entry = |command: String, timeout: u64, matcher: Option<&str>| -> Value {
+            let mut obj = serde_json::Map::new();
+            obj.insert(MANAGED_SENTINEL.into(), Value::Bool(true));
+            if let Some(m) = matcher {
+                obj.insert("matcher".into(), Value::String(m.into()));
+            }
+            obj.insert(
+                "hooks".into(),
+                json!([{
+                    "type": "command",
+                    "command": command,
+                    "timeout": timeout,
+                }]),
+            );
+            Value::Object(obj)
+        };
+
+        json!({
+            "description": "Hoangsa Codex hooks",
+            "hooks": {
+                "SessionStart": [
+                    managed_entry(format!("{cli} hook codex SessionStart"), 5, None)
+                ],
+                "PreToolUse": [
+                    managed_entry(format!("{cli} hook codex PreToolUse lesson-guard"), 10, Some("Edit|Write|apply_patch|Bash")),
+                    managed_entry(format!("{cli} hook codex PreToolUse enforce"), 10, Some("Edit|Write|apply_patch|Bash"))
+                ],
+                "PostToolUse": [
+                    managed_entry(format!("{cli} hook codex PostToolUse"), 5, Some("mcp__hoangsa-memory__memory_impact|mcp__hoangsa-memory__memory_detect_changes|mcp__hoangsa-memory__memory_recall|Edit|Write|apply_patch"))
+                ],
+                "PreCompact": [
+                    managed_entry(format!("{cli} hook codex PreCompact"), 5, None)
+                ],
+                "Stop": [
+                    managed_entry(format!("{cli} hook codex Stop"), 5, None)
+                ]
+            }
+        })
+    }
+
+    pub fn build_hoangsa_hooks() -> Value {
+        build_hoangsa_hooks_inner(super::memory_install_dir().ok().as_deref())
+    }
+
+    fn is_hoangsa_entry(entry: &Value) -> bool {
+        let Some(obj) = entry.as_object() else {
+            return false;
+        };
+        if obj
+            .get(MANAGED_SENTINEL)
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+        {
+            return true;
+        }
+        obj.get("hooks")
+            .and_then(|h| h.as_array())
+            .into_iter()
+            .flatten()
+            .any(|h| {
+                h.get("command")
+                    .and_then(|c| c.as_str())
+                    .is_some_and(|cmd| cmd.contains("hoangsa-cli hook codex"))
+            })
+    }
+
+    fn entry_dedupe_key(entry: &Value) -> String {
+        let matcher = entry.get("matcher").and_then(|m| m.as_str()).unwrap_or("");
+        let cmd = entry
+            .get("hooks")
+            .and_then(|h| h.as_array())
+            .and_then(|a| a.first())
+            .and_then(|h0| h0.get("command"))
+            .and_then(|c| c.as_str())
+            .unwrap_or("");
+        format!("{matcher}\x1f{cmd}")
+    }
+
+    pub fn merge_hoangsa_hooks(config: &mut Value, incoming: &Value) -> usize {
+        let Some(config_obj) = config.as_object_mut() else {
+            return 0;
+        };
+        let hooks_val = config_obj
+            .entry("hooks".to_string())
+            .or_insert_with(|| Value::Object(serde_json::Map::new()));
+        let hooks_obj = match hooks_val.as_object_mut() {
+            Some(o) => o,
+            None => {
+                *hooks_val = Value::Object(serde_json::Map::new());
+                hooks_val.as_object_mut().expect("just replaced with object")
+            }
+        };
+        let Some(incoming_hooks) = incoming.get("hooks").and_then(|h| h.as_object()) else {
+            return 0;
+        };
+
+        let mut added = 0usize;
+        for (event, new_entries) in incoming_hooks {
+            let Some(new_arr) = new_entries.as_array() else {
+                continue;
+            };
+            let existing = hooks_obj
+                .remove(event)
+                .and_then(|v| v.as_array().cloned())
+                .unwrap_or_default();
+            let mut preserved: Vec<Value> = existing
+                .into_iter()
+                .filter(|e| !is_hoangsa_entry(e))
+                .collect();
+            let mut seen: std::collections::HashSet<String> =
+                preserved.iter().map(entry_dedupe_key).collect();
+
+            for entry in new_arr {
+                let key = entry_dedupe_key(entry);
+                if seen.insert(key) {
+                    preserved.push(entry.clone());
+                    added += 1;
+                }
+            }
+            hooks_obj.insert(event.clone(), Value::Array(preserved));
+        }
+        added
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        use tempfile::tempdir;
+
+        fn sandbox_root(tmp: &Path) -> PathBuf {
+            let root = tmp.join("hoangsa-root");
+            std::fs::create_dir_all(root.join("bin")).expect("mkdir root/bin");
+            root
+        }
+
+        #[test]
+        fn merge_preserves_user_hooks_and_is_idempotent() {
+            let tmp = tempdir().expect("tempdir");
+            let root = sandbox_root(tmp.path());
+            let incoming = build_hoangsa_hooks_inner(Some(&root));
+            let mut config = json!({
+                "description": "user file",
+                "hooks": {
+                    "PreToolUse": [{
+                        "matcher": "Bash",
+                        "hooks": [{ "type": "command", "command": "/usr/local/bin/user-hook" }]
+                    }]
+                }
+            });
+
+            let first = merge_hoangsa_hooks(&mut config, &incoming);
+            let second = merge_hoangsa_hooks(&mut config, &incoming);
+            assert_eq!(first, 6);
+            assert_eq!(second, 6);
+            assert_eq!(config["description"], "user file");
+
+            let pre = config["hooks"]["PreToolUse"].as_array().expect("pre hooks");
+            assert_eq!(pre.len(), 3, "user hook plus two Hoangsa entries");
+            assert!(pre.iter().any(|entry| {
+                entry["hooks"][0]["command"].as_str() == Some("/usr/local/bin/user-hook")
+            }));
+            let total: usize = config["hooks"]
+                .as_object()
+                .expect("hooks object")
+                .values()
+                .filter_map(|v| v.as_array())
+                .map(|v| v.len())
+                .sum();
+            assert_eq!(total, 7);
+        }
+    }
+}
+
 // ───────────────────────── relocate submodule ─────────────────────────
 //
 // Moves the bundled `hoangsa-memory` + `hoangsa-memory-mcp` binaries out of
@@ -2910,6 +3127,13 @@ pub fn cmd_install(args: &[&str]) {
                 }
                 _ => {}
             }
+            match codex_hooks::hooks_path(mode, &cwd) {
+                Ok(p) => actions_json.push(json!({
+                    "action": "merge_codex_hooks",
+                    "path": p,
+                })),
+                Err(e) => warnings.push(e),
+            }
         }
 
         let preview = json!({
@@ -2997,6 +3221,30 @@ pub fn cmd_install(args: &[&str]) {
             _ => None,
         };
 
+        let hooks_path = match codex_hooks::hooks_path(mode, &cwd) {
+            Ok(p) => p,
+            Err(e) => {
+                eprintln!("install: {e}");
+                std::process::exit(1);
+            }
+        };
+        let mut hooks_config = match codex_hooks::load_hooks(&hooks_path) {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!("install: load codex hooks failed: {e}");
+                std::process::exit(1);
+            }
+        };
+        let codex_hooks_added = codex_hooks::merge_hoangsa_hooks(
+            &mut hooks_config,
+            &codex_hooks::build_hoangsa_hooks(),
+        );
+        if let Err(e) = codex_hooks::save_hooks(&hooks_path, &hooks_config) {
+            eprintln!("install: save codex hooks failed: {e}");
+            std::process::exit(1);
+        }
+        let codex_hooks_file = Some(hooks_path);
+
         let (guidance_synced, guidance_report) =
             match super::guidance::sync_for_target(&cwd, super::guidance::GuidanceTarget::Codex) {
                 Ok(r) => (true, Some(r)),
@@ -3013,6 +3261,8 @@ pub fn cmd_install(args: &[&str]) {
             "target": flags.target.as_str(),
             "mcp_target": mcp_target.clone(),
             "codex_mcp_target": mcp_target,
+            "codex_hooks": codex_hooks_file,
+            "codex_hooks_added": codex_hooks_added,
             "codex_skills_root": codex_skills_root,
             "codex_skills_copied": codex_skills_copied,
             "codex_skills_skipped_missing": codex_skills_skipped_missing,
@@ -3139,6 +3389,34 @@ pub fn cmd_install(args: &[&str]) {
             std::process::exit(1);
         }
         settings_file = Some(path);
+    }
+
+    let mut codex_hooks_file: Option<PathBuf> = None;
+    let mut codex_hooks_added = 0usize;
+    if flags.target.includes_codex() {
+        let path = match codex_hooks::hooks_path(mode, &cwd) {
+            Ok(p) => p,
+            Err(e) => {
+                eprintln!("install: {e}");
+                std::process::exit(1);
+            }
+        };
+        let mut hooks_config = match codex_hooks::load_hooks(&path) {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!("install: load codex hooks failed: {e}");
+                std::process::exit(1);
+            }
+        };
+        codex_hooks_added = codex_hooks::merge_hoangsa_hooks(
+            &mut hooks_config,
+            &codex_hooks::build_hoangsa_hooks(),
+        );
+        if let Err(e) = codex_hooks::save_hooks(&path, &hooks_config) {
+            eprintln!("install: save codex hooks failed: {e}");
+            std::process::exit(1);
+        }
+        codex_hooks_file = Some(path);
     }
 
     // T-05: mode-aware MCP / rules / memory_ignore / quality-skills.
@@ -3316,6 +3594,8 @@ pub fn cmd_install(args: &[&str]) {
         "settings_backup": settings_backup,
         "hooks_added": hooks_added,
         "statusline_set": statusline_set,
+        "codex_hooks": codex_hooks_file,
+        "codex_hooks_added": codex_hooks_added,
         "memory_relocated": memory_relocated,
         "memory_skipped_missing": memory_skipped_missing,
         "memory_note": memory_note,
