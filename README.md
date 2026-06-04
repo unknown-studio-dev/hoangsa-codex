@@ -56,6 +56,7 @@ curl -fsSL https://github.com/pirumu/hoangsa/releases/latest/download/install.sh
 | `--global` | Install globally for this user (default) — writes to the resolved Claude config dir |
 | `--local` | Install for the current project only — writes to `./.claude/` |
 | `--target claude\|codex\|both` | Select the install target. Default is `claude`; `codex` configures Codex memory MCP, skills, guidance, and hooks. |
+| `--codex-memory-root <path>` | Pin Codex memory to a specific root. Valid only with `--local --target codex` or `--local --target both`; writes only to `<project>/.codex/config.toml`. |
 | `--no-embed` | Skip pre-downloading the `multilingual-e5-small` weights (~118 MB). They will fetch lazily on first `index` / `query` / `archive ingest`. Useful on bandwidth-constrained links. |
 | `--dry-run` | Print actions without writing files — good for auditing |
 | `--help` | Show the installer help |
@@ -172,6 +173,22 @@ The installer also routes memory skills to `.agents/skills/hoangsa/`,
 syncs Hoangsa guidance into `AGENTS.md`, and writes conservative Codex
 hook entries under `.codex/hooks.json`. `hsp` shell-output rewriting is
 not enabled for Codex unless explicitly opted in by a later release.
+
+Codex support is intentionally scoped:
+
+- Codex installs configure memory MCP, memory skills, guidance, and
+  project/global hook files; they do not install Claude slash commands or
+  Claude agent templates.
+- Global Codex installs never write `HOANGSA_MEMORY_ROOT`. Local Codex
+  installs preserve an existing project-local `HOANGSA_MEMORY_ROOT` when
+  `--codex-memory-root` is omitted.
+- Hoangsa UI/API config edits are constrained to validated Hoangsa config
+  files only: global `config.json` or project `.hoangsa/config.json`.
+  Project paths must resolve to existing directories; selected files are
+  rejected before registration, switching, diffing, or applying config.
+- Codex plugin hook bundling is not enabled yet. Direct CLI install is the
+  supported path for Codex hooks until the Codex plugin hook schema is
+  validated against the target Codex release.
 
 ### Codex plugin package
 
