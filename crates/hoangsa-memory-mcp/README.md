@@ -60,6 +60,31 @@ curl -fsSL https://github.com/pirumu/hoangsa/releases/latest/download/install.sh
 }
 ```
 
+**Codex registration** (`~/.codex/config.toml` or
+`<project>/.codex/config.toml`):
+
+```toml
+[mcp_servers.hoangsa-memory]
+command = "/ABSOLUTE/PATH/TO/hoangsa-memory-mcp"
+args = []
+startup_timeout_sec = 20
+tool_timeout_sec = 120
+
+[mcp_servers.hoangsa-memory.env]
+RUST_LOG = "info"
+```
+
+Install with:
+
+```sh
+hoangsa-cli install --target codex --global
+hoangsa-cli install --target codex --local
+```
+
+Avoid setting global `HOANGSA_MEMORY_ROOT`; project memory should resolve
+from the Codex session working directory. The server also returns concise
+memory-use guidance in its MCP `initialize` response.
+
 **Build from source:**
 
 ```sh

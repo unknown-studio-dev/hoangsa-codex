@@ -2,8 +2,8 @@
 //! messages, drive `Server::handle` directly, and assert on the result
 //! payload shape. No real stdio involved.
 
-use serde_json::{Value, json};
 use hoangsa_memory_mcp::{Server, proto::RpcIncoming};
+use serde_json::{Value, json};
 
 async fn open(tmp: &tempfile::TempDir) -> Server {
     Server::open(tmp.path()).await.expect("server opens")
@@ -34,6 +34,11 @@ async fn initialize_advertises_server_info_and_capabilities() {
     assert_eq!(result["serverInfo"]["name"], "hoangsa-memory-mcp");
     assert!(result["capabilities"]["tools"].is_object());
     assert!(result["capabilities"]["resources"].is_object());
+    let instructions = result["instructions"]
+        .as_str()
+        .expect("initialize returns memory-use instructions");
+    assert!(instructions.contains("memory_wakeup"));
+    assert!(instructions.contains("memory_impact"));
 }
 
 #[tokio::test]
@@ -119,8 +124,14 @@ async fn resources_list_and_read_markdown_files() {
         .iter()
         .map(|r| r["uri"].as_str().unwrap().to_string())
         .collect();
-    assert!(uris.iter().any(|u| u == "hoangsa-memory://memory/MEMORY.md"));
-    assert!(uris.iter().any(|u| u == "hoangsa-memory://memory/LESSONS.md"));
+    assert!(
+        uris.iter()
+            .any(|u| u == "hoangsa-memory://memory/MEMORY.md")
+    );
+    assert!(
+        uris.iter()
+            .any(|u| u == "hoangsa-memory://memory/LESSONS.md")
+    );
 
     let resp = srv
         .handle(req(
@@ -717,7 +728,13 @@ pub fn generic<T: Into<Config>>(t: T) {}
             callers.push(n["fqn"].as_str().expect("fqn").to_string());
         }
     }
-    for expected in ["m::direct", "m::in_ref", "m::in_vec", "m::returns", "m::generic"] {
+    for expected in [
+        "m::direct",
+        "m::in_ref",
+        "m::in_vec",
+        "m::returns",
+        "m::generic",
+    ] {
         assert!(
             callers.iter().any(|f| f == expected),
             "missing {expected} in impact(Config, up): {callers:?}"

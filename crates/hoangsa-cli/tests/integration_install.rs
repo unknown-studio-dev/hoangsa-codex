@@ -45,6 +45,7 @@ fn install_cmd(home: &Path, cwd: &Path) -> Command {
         .env_remove("HOANGSA_INSTALL_DIR")
         .env_remove("HOANGSA_NO_PATH_EDIT")
         .env_remove("CLAUDE_CONFIG_DIR")
+        .env_remove("CODEX_HOME")
         .current_dir(cwd);
     cmd
 }
@@ -95,6 +96,37 @@ fn seed_templates(root: &Path) -> PathBuf {
     templates
 }
 
+fn seed_memory_skill_templates(root: &Path) -> PathBuf {
+    let templates = seed_templates(root);
+    let skills = [
+        "memory-discipline",
+        "memory-reflect",
+        "memory-guide",
+        "memory-impact-analysis",
+        "memory-exploring",
+        "memory-debugging",
+        "memory-refactoring",
+        "memory-cli",
+        "git-flow",
+        "visual-debug",
+    ];
+    for skill in skills {
+        let path = templates
+            .join("skills")
+            .join("hoangsa")
+            .join(skill)
+            .join("SKILL.md");
+        fs::create_dir_all(path.parent().expect("skill parent")).expect("create skill dir");
+        let body = if skill == "memory-cli" {
+            "# memory-cli\n\nUses .claude/settings.json, .mcp.json, and ~/.claude/skills/.\n"
+        } else {
+            "# memory skill\n"
+        };
+        fs::write(path, body).expect("write skill");
+    }
+    templates
+}
+
 /// Walk every path-shaped string in an `actions` array. Used by the
 /// cwd-leak guard tests.
 fn collect_action_paths(actions: &[Value]) -> Vec<PathBuf> {
@@ -107,6 +139,16 @@ fn collect_action_paths(actions: &[Value]) -> Vec<PathBuf> {
         }
     }
     out
+}
+
+fn action_names(v: &Value) -> Vec<String> {
+    v["actions"]
+        .as_array()
+        .expect("actions array")
+        .iter()
+        .filter_map(|a| a.get("action").and_then(|v| v.as_str()))
+        .map(ToString::to_string)
+        .collect()
 }
 
 // ─── 1. dry-run global mode ──────────────────────────────────────────────
@@ -133,6 +175,37 @@ fn dry_run_local_emits_mode_local() {
     let out = run(install_cmd(home.path(), cwd.path()).args(["--local", "--dry-run"]));
     let v = expect_success_json(&out, "dry-run local");
     assert_eq!(v["mode"], "local", "expected mode=local; got: {v}");
+}
+
+#[test]
+fn dry_run_codex_local_plans_agents_skills_and_guidance_only() {
+    let (home, cwd) = tmp_home_cwd();
+    let staging = tempfile::tempdir().expect("staging tempdir");
+    let templates = seed_memory_skill_templates(staging.path());
+
+    let out = run(install_cmd(home.path(), cwd.path())
+        .env("HOANGSA_TEMPLATES_DIR", &templates)
+        .args(["--local", "--target", "codex", "--dry-run"]));
+    let v = expect_success_json(&out, "dry-run codex local");
+
+    assert_eq!(v["target"], "codex");
+    let names = action_names(&v);
+    assert!(names.contains(&"install_codex_memory_skills".to_string()));
+    assert!(names.contains(&"sync_codex_guidance".to_string()));
+    assert!(!names.contains(&"register_mcp_local".to_string()));
+    assert!(!names.contains(&"merge_settings".to_string()));
+
+    let codex_action = v["actions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|a| a["action"] == "install_codex_memory_skills")
+        .expect("codex skills action");
+    let target = codex_action["target"].as_str().expect("target");
+    assert!(
+        target.ends_with(".agents/skills/hoangsa"),
+        "codex local skills target must be .agents/skills/hoangsa; got: {target}"
+    );
 }
 
 // ─── 4. --global + --local rejected (REQ-15) ─────────────────────────────
@@ -240,6 +313,67 @@ fn dry_run_local_references_cwd_paths() {
         "local mode must plan at least one action under cwd ({:?}); got: {v}",
         cwd.path()
     );
+}
+
+#[test]
+fn dry_run_codex_global_has_no_claude_writes() {
+    let (home, cwd) = tmp_home_cwd();
+
+    let out = run(install_cmd(home.path(), cwd.path()).args([
+        "--target",
+        "codex",
+        "--global",
+        "--dry-run",
+    ]));
+    let v = expect_success_json(&out, "dry-run codex global");
+    assert_eq!(v["target"], "codex", "expected target=codex; got: {v}");
+    let actions = v["actions"].as_array().expect("actions array");
+    assert!(
+        actions.iter().any(|a| {
+            a.get("action").and_then(|s| s.as_str()) == Some("register_codex_mcp_global")
+        }),
+        "codex global dry-run must plan Codex MCP config write; got: {v}"
+    );
+    for p in collect_action_paths(actions) {
+        let s = p.display().to_string();
+        assert!(
+            !s.contains(".claude") && !s.ends_with(".mcp.json"),
+            "codex global dry-run must not plan Claude writes; got path {s}"
+        );
+    }
+}
+
+#[test]
+fn dry_run_codex_local_targets_project_codex_config() {
+    let (home, cwd) = tmp_home_cwd();
+
+    let out = run(install_cmd(home.path(), cwd.path()).args([
+        "--target",
+        "codex",
+        "--local",
+        "--dry-run",
+    ]));
+    let v = expect_success_json(&out, "dry-run codex local");
+    let actions = v["actions"].as_array().expect("actions array");
+    let codex_config = fs::canonicalize(cwd.path())
+        .unwrap_or_else(|_| cwd.path().to_path_buf())
+        .join(".codex")
+        .join("config.toml");
+    assert!(
+        actions.iter().any(|a| {
+            a.get("target")
+                .and_then(|s| s.as_str())
+                .is_some_and(|s| s == codex_config.display().to_string())
+        }),
+        "codex local dry-run must target project .codex/config.toml; got: {v}"
+    );
+    for p in collect_action_paths(actions) {
+        let s = p.display().to_string();
+        assert!(
+            !s.contains(".claude") && !s.ends_with(".mcp.json"),
+            "codex local dry-run must not plan Claude writes; got path {s}"
+        );
+    }
 }
 
 // ─── 8. live --global preserves existing mcpServers entries (REQ-08) ─────
@@ -561,6 +695,14 @@ fn dry_run_target_codex_local_plans_codex_hooks_only() {
 #[test]
 fn live_target_codex_preserves_user_hooks_and_skips_claude_settings() {
     let (home, cwd) = tmp_home_cwd();
+    let staging = tempfile::tempdir().expect("staging tempdir");
+    let templates = seed_templates(staging.path());
+
+    let install_dir = tempfile::tempdir().expect("install_dir tempdir");
+    let bin_dir = install_dir.path().join("bin");
+    fs::create_dir_all(&bin_dir).expect("mkdir bin");
+    fs::write(bin_dir.join("hoangsa-memory-mcp"), "#!/bin/sh\n").expect("write fake mcp bin");
+
     let hooks_path = cwd.path().join(".codex").join("hooks.json");
     fs::create_dir_all(hooks_path.parent().unwrap()).expect("mkdir .codex");
     fs::write(
@@ -579,12 +721,10 @@ fn live_target_codex_preserves_user_hooks_and_skips_claude_settings() {
     .expect("seed codex hooks");
 
     for run_idx in 0..2 {
-        let out = run(install_cmd(home.path(), cwd.path()).args([
-            "--target",
-            "codex",
-            "--local",
-            "--no-memory",
-        ]));
+        let out = run(install_cmd(home.path(), cwd.path())
+            .env("HOANGSA_TEMPLATES_DIR", &templates)
+            .env("HOANGSA_INSTALL_DIR", install_dir.path())
+            .args(["--target", "codex", "--local", "--no-memory"]));
         assert!(
             out.status.success(),
             "codex install run {run_idx} must succeed; stderr: {}",
@@ -652,14 +792,61 @@ fn local_install_seeds_memory_guidance_pointer() {
         claude.contains("<!-- hoangsa-memory-start -->"),
         "CLAUDE.md must carry the hoangsa-memory pointer block; got: {claude}"
     );
-    let agents = fs::read_to_string(cwd.path().join("AGENTS.md"))
-        .expect("AGENTS.md should exist after install");
     assert!(
-        agents.contains("<!-- hoangsa-memory-start -->"),
-        "AGENTS.md must carry the hoangsa-memory pointer block; got: {agents}"
+        !cwd.path().join("AGENTS.md").exists(),
+        "default Claude target should not write Codex AGENTS.md guidance"
     );
     assert!(
         cwd.path().join(".hoangsa/memory-guidance.md").exists(),
         ".hoangsa/memory-guidance.md body must be written by sync"
     );
+}
+
+#[test]
+fn live_codex_local_installs_memory_skills_and_agents_guidance() {
+    let (home, cwd) = tmp_home_cwd();
+    let staging = tempfile::tempdir().expect("staging tempdir");
+    let templates = seed_memory_skill_templates(staging.path());
+    let install_dir = tempfile::tempdir().expect("install_dir tempdir");
+    let bin_dir = install_dir.path().join("bin");
+    fs::create_dir_all(&bin_dir).expect("mkdir bin");
+    fs::write(bin_dir.join("hoangsa-memory-mcp"), "#!/bin/sh\n").expect("write fake bin");
+
+    let out = run(install_cmd(home.path(), cwd.path())
+        .env("HOANGSA_TEMPLATES_DIR", &templates)
+        .env("HOANGSA_INSTALL_DIR", install_dir.path())
+        .args(["--local", "--target", "codex", "--no-memory"]));
+    let v = expect_success_json(&out, "live codex local");
+
+    assert_eq!(v["target"], "codex");
+    let skills_root = cwd.path().join(".agents/skills/hoangsa");
+    for skill in [
+        "memory-discipline",
+        "memory-reflect",
+        "memory-guide",
+        "memory-impact-analysis",
+        "memory-exploring",
+        "memory-debugging",
+        "memory-refactoring",
+        "memory-cli",
+    ] {
+        assert!(
+            skills_root.join(skill).join("SKILL.md").exists(),
+            "missing installed Codex memory skill: {skill}"
+        );
+    }
+    assert!(!skills_root.join("git-flow").exists());
+    assert!(!skills_root.join("visual-debug").exists());
+
+    let cli_skill = fs::read_to_string(skills_root.join("memory-cli/SKILL.md")).unwrap();
+    assert!(cli_skill.contains(".codex/config.toml"));
+    assert!(cli_skill.contains(".agents/skills/hoangsa"));
+    assert!(!cli_skill.contains(".mcp.json"));
+    assert!(!cli_skill.contains("~/.claude/skills"));
+
+    let agents = fs::read_to_string(cwd.path().join("AGENTS.md")).unwrap();
+    assert!(agents.contains("## Hoangsa Memory"));
+    assert!(agents.contains("memory_wakeup"));
+    assert!(!agents.contains("@.hoangsa/memory-guidance.md"));
+    assert!(!cwd.path().join("CLAUDE.md").exists());
 }
