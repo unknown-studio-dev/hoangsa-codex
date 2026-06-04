@@ -116,7 +116,8 @@ mod tests {
 
     #[test]
     fn pip_drops_requirement_satisfied() {
-        let input = "Requirement already satisfied: foo\nCollecting bar\nSuccessfully installed bar-1.0\n";
+        let input =
+            "Requirement already satisfied: foo\nCollecting bar\nSuccessfully installed bar-1.0\n";
         let out = pip_filter(&ctx("pip", input)).stdout.unwrap();
         assert!(!out.contains("Requirement already"));
         assert!(!out.contains("Collecting"));

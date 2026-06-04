@@ -2442,7 +2442,27 @@ fn now_iso_for_usage() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
+    use serde_json::{Value, json};
+
+    fn codex_fixture(name: &str) -> Value {
+        let raw = match name {
+            "pre_tool_use_apply_patch" => include_str!(
+                "../../tests/fixtures/codex-hooks/pre_tool_use_apply_patch.sample.json"
+            ),
+            "pre_tool_use_bash" => {
+                include_str!("../../tests/fixtures/codex-hooks/pre_tool_use_bash.sample.json")
+            }
+            "post_tool_use_memory_impact" => include_str!(
+                "../../tests/fixtures/codex-hooks/post_tool_use_memory_impact.sample.json"
+            ),
+            "pre_compact_missing_transcript" => include_str!(
+                "../../tests/fixtures/codex-hooks/pre_compact_missing_transcript.sample.json"
+            ),
+            "stop" => include_str!("../../tests/fixtures/codex-hooks/stop.sample.json"),
+            other => panic!("unknown Codex hook fixture: {other}"),
+        };
+        serde_json::from_str(raw).expect("fixture JSON")
+    }
 
     #[test]
     fn normalize_codex_apply_patch_maps_to_edit_write() {
@@ -2450,11 +2470,7 @@ mod tests {
             HookPlatform::Codex,
             HookEventKind::PreToolUse,
             "/repo",
-            json!({
-                "tool_name": "apply_patch",
-                "input": { "path": "src/lib.rs" },
-                "cwd": "/repo"
-            }),
+            codex_fixture("pre_tool_use_apply_patch"),
         );
 
         assert_eq!(event.category, HookToolCategory::EditWrite);
@@ -2470,10 +2486,7 @@ mod tests {
             HookPlatform::Codex,
             HookEventKind::PreToolUse,
             "/repo",
-            json!({
-                "tool": { "name": "shell" },
-                "arguments": { "command": "git status --short" }
-            }),
+            codex_fixture("pre_tool_use_bash"),
         );
 
         assert_eq!(event.category, HookToolCategory::Bash);
@@ -2489,11 +2502,56 @@ mod tests {
             HookPlatform::Codex,
             HookEventKind::PreCompact,
             "/repo",
-            json!({ "cwd": "/repo" }),
+            codex_fixture("pre_compact_missing_transcript"),
         );
 
         assert_eq!(event.transcript_path, None);
         assert_eq!(event.cwd, PathBuf::from("/repo"));
+    }
+
+    #[test]
+    fn normalize_codex_post_tool_memory_impact_records_event() {
+        let tmp = tempfile::tempdir().unwrap();
+        fs::create_dir_all(tmp.path().join(".hoangsa")).unwrap();
+        fs::write(tmp.path().join(".hoangsa/config.json"), "{}").unwrap();
+        let cwd = tmp.path().to_str().unwrap();
+        let event = normalize_hook_event(
+            HookPlatform::Codex,
+            HookEventKind::PostToolUse,
+            cwd,
+            codex_fixture("post_tool_use_memory_impact"),
+        );
+        let payload = normalized_to_claude_payload(&event);
+
+        let decision = post_enforce_decision(cwd, &payload);
+
+        assert_eq!(decision["decision"], "approve");
+        let events = fs::read_to_string(enforcement_events_path(cwd)).expect("events file");
+        assert!(events.contains("\"event\":\"impact\""), "events: {events}");
+        assert!(
+            events.contains("\"symbol\":\"crate::module::target\""),
+            "events: {events}"
+        );
+    }
+
+    #[test]
+    fn normalize_codex_stop_preserves_reflect_prompt_behavior() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cwd = tmp.path().to_str().unwrap();
+        seed_events_file(tmp.path());
+        let event = normalize_hook_event(
+            HookPlatform::Codex,
+            HookEventKind::Stop,
+            cwd,
+            codex_fixture("stop"),
+        );
+
+        match evaluate_reflect_prompt(cwd, &event.raw.to_string()) {
+            ReflectOutcome::Prompt(reason) => {
+                assert!(reason.contains("memory-reflect"), "reason: {reason}");
+            }
+            ReflectOutcome::Skip => panic!("expected Prompt, got Skip"),
+        }
     }
 
     // ── intent_guard_edit ────────────────────────────────────────────────────

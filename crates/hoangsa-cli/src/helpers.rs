@@ -12,7 +12,9 @@ pub fn read_json(file_path: &str) -> Value {
     match fs::read_to_string(file_path) {
         Ok(content) => match serde_json::from_str(&content) {
             Ok(v) => v,
-            Err(e) => serde_json::json!({ "error": format!("Invalid JSON in {}: {}", file_path, e) }),
+            Err(e) => {
+                serde_json::json!({ "error": format!("Invalid JSON in {}: {}", file_path, e) })
+            }
         },
         Err(e) => serde_json::json!({ "error": format!("Cannot read {}: {}", file_path, e) }),
     }
@@ -91,16 +93,17 @@ pub fn resolve_cwd(args: &[String]) -> String {
 fn raw_cwd(args: &[String]) -> String {
     for i in 0..args.len() {
         if args[i] == "--cwd"
-            && let Some(dir) = args.get(i + 1) {
-                let p = Path::new(dir);
-                if !p.is_absolute() {
-                    eprintln!("Warning: --cwd must be an absolute path, ignoring: {dir}");
-                } else if let Ok(canonical) = std::fs::canonicalize(p) {
-                    return canonical.to_string_lossy().to_string();
-                } else {
-                    eprintln!("Warning: --cwd path does not exist, ignoring: {dir}");
-                }
+            && let Some(dir) = args.get(i + 1)
+        {
+            let p = Path::new(dir);
+            if !p.is_absolute() {
+                eprintln!("Warning: --cwd must be an absolute path, ignoring: {dir}");
+            } else if let Ok(canonical) = std::fs::canonicalize(p) {
+                return canonical.to_string_lossy().to_string();
+            } else {
+                eprintln!("Warning: --cwd path does not exist, ignoring: {dir}");
             }
+        }
     }
     std::env::current_dir()
         .unwrap_or_default()

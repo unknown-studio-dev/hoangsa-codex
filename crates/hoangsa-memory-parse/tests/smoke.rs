@@ -2,12 +2,12 @@
 //!
 //! Run with `cargo test -p hoangsa-memory-parse`.
 
-use std::time::Duration;
-use tempfile::tempdir;
 use hoangsa_memory_parse::{
     LanguageRegistry,
     walk::{WalkOptions, walk_sources},
 };
+use std::time::Duration;
+use tempfile::tempdir;
 
 const RUST_SAMPLE: &str = r#"
 use std::collections::HashMap;
@@ -288,10 +288,7 @@ pub fn evaluate(cfg: &RulesConfig, r: &Rule) -> bool {
     ];
     for (owner, ty) in expected {
         assert!(
-            table
-                .references
-                .iter()
-                .any(|(o, t)| o == owner && t == ty),
+            table.references.iter().any(|(o, t)| o == owner && t == ty),
             "missing reference {owner} → {ty} in {:?}",
             table.references,
         );

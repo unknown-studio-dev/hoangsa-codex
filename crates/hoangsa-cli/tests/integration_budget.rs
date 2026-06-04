@@ -43,8 +43,7 @@ fn parse_json(stdout: &str) -> Value {
 fn write_minimal_plan(dir: &Path) -> PathBuf {
     let dir_str = dir.to_string_lossy();
     let src_file = dir.join("src").join("main.rs");
-    fs::create_dir_all(src_file.parent().expect("parent exists"))
-        .expect("create src dir");
+    fs::create_dir_all(src_file.parent().expect("parent exists")).expect("create src dir");
     fs::write(&src_file, "fn main() {}").expect("write src/main.rs");
 
     let plan = serde_json::json!({
@@ -68,8 +67,11 @@ fn write_minimal_plan(dir: &Path) -> PathBuf {
     });
 
     let plan_path = dir.join("plan.json");
-    fs::write(&plan_path, serde_json::to_string_pretty(&plan).expect("serialize plan"))
-        .expect("write plan.json");
+    fs::write(
+        &plan_path,
+        serde_json::to_string_pretty(&plan).expect("serialize plan"),
+    )
+    .expect("write plan.json");
     plan_path
 }
 
@@ -89,12 +91,24 @@ fn test_budget_estimate_outputs_valid_json() {
     let v = parse_json(&stdout);
 
     assert!(v.get("breakdown").is_some(), "missing 'breakdown' field");
-    assert!(v.get("overhead_constants").is_some(), "missing 'overhead_constants' field");
-    assert!(v.get("complexity_profile").is_some(), "missing 'complexity_profile' field");
+    assert!(
+        v.get("overhead_constants").is_some(),
+        "missing 'overhead_constants' field"
+    );
+    assert!(
+        v.get("complexity_profile").is_some(),
+        "missing 'complexity_profile' field"
+    );
 
     let bd = &v["breakdown"];
-    assert!(bd.get("work_tokens").is_some(), "breakdown missing work_tokens");
-    assert!(bd.get("system_prompt_effective").is_some(), "breakdown missing system_prompt_effective");
+    assert!(
+        bd.get("work_tokens").is_some(),
+        "breakdown missing work_tokens"
+    );
+    assert!(
+        bd.get("system_prompt_effective").is_some(),
+        "breakdown missing system_prompt_effective"
+    );
     assert!(bd.get("total").is_some(), "breakdown missing total");
 }
 
@@ -129,12 +143,19 @@ fn test_budget_estimate_missing_task_id() {
         "tasks": []
     });
     let empty_path = tmp.path().join("empty_plan.json");
-    fs::write(&empty_path, serde_json::to_string_pretty(&empty_plan).expect("serialize"))
-        .expect("write empty_plan.json");
+    fs::write(
+        &empty_path,
+        serde_json::to_string_pretty(&empty_plan).expect("serialize"),
+    )
+    .expect("write empty_plan.json");
 
-    let (empty_stdout, _empty_stderr, _) = run_cli(&["budget", "estimate", &empty_path.to_string_lossy()]);
+    let (empty_stdout, _empty_stderr, _) =
+        run_cli(&["budget", "estimate", &empty_path.to_string_lossy()]);
     let empty_v = parse_json(&empty_stdout);
-    assert!(empty_v.get("error").is_some(), "expected error for empty tasks plan; got: {empty_v}");
+    assert!(
+        empty_v.get("error").is_some(),
+        "expected error for empty tasks plan; got: {empty_v}"
+    );
 }
 
 /// [REQ-02] `budget breakdown <plan>` with 3 tasks must return a `tasks` array
@@ -196,8 +217,11 @@ fn test_budget_breakdown_outputs_all_tasks() {
     });
 
     let plan_path = dir.join("plan.json");
-    fs::write(&plan_path, serde_json::to_string_pretty(&plan).expect("serialize plan"))
-        .expect("write plan.json");
+    fs::write(
+        &plan_path,
+        serde_json::to_string_pretty(&plan).expect("serialize plan"),
+    )
+    .expect("write plan.json");
 
     let (stdout, stderr, success) = run_cli(&["budget", "breakdown", &plan_path.to_string_lossy()]);
     assert!(success, "expected success; stderr: {stderr}");
@@ -240,13 +264,18 @@ fn test_stats_record_and_summary_roundtrip() {
     });
     let record_str = serde_json::to_string(&record).expect("serialize record");
 
-    let (record_out, record_err, record_ok) =
-        run_cli_cwd(&cwd, &["stats", "record", &record_str]);
+    let (record_out, record_err, record_ok) = run_cli_cwd(&cwd, &["stats", "record", &record_str]);
     assert!(record_ok, "stats record failed; stderr: {record_err}");
 
     let record_v = parse_json(&record_out);
-    assert_eq!(record_v["success"], true, "expected success=true; got: {record_v}");
-    assert_eq!(record_v["records_total"], 1, "expected records_total=1 after first record");
+    assert_eq!(
+        record_v["success"], true,
+        "expected success=true; got: {record_v}"
+    );
+    assert_eq!(
+        record_v["records_total"], 1,
+        "expected records_total=1 after first record"
+    );
 
     let (summary_out, summary_err, summary_ok) = run_cli_cwd(&cwd, &["stats", "summary"]);
     assert!(summary_ok, "stats summary failed; stderr: {summary_err}");
@@ -284,10 +313,17 @@ fn test_stats_summary_with_filters() {
     };
 
     // Record three entries: low, medium, high
-    for (complexity, est, act) in &[("low", 10000u64, 8000u64), ("medium", 20000, 18000), ("high", 40000, 35000)] {
+    for (complexity, est, act) in &[
+        ("low", 10000u64, 8000u64),
+        ("medium", 20000, 18000),
+        ("high", 40000, 35000),
+    ] {
         let record_str = make_record(complexity, *est, *act);
         let (_, stderr, success) = run_cli_cwd(&cwd, &["stats", "record", &record_str]);
-        assert!(success, "stats record ({complexity}) failed; stderr: {stderr}");
+        assert!(
+            success,
+            "stats record ({complexity}) failed; stderr: {stderr}"
+        );
     }
 
     // --last 1 should return filtered_records=1
@@ -304,9 +340,11 @@ fn test_stats_summary_with_filters() {
     );
 
     // --complexity low should return only the low entry
-    let (cx_out, cx_err, cx_ok) =
-        run_cli_cwd(&cwd, &["stats", "summary", "--complexity", "low"]);
-    assert!(cx_ok, "stats summary --complexity low failed; stderr: {cx_err}");
+    let (cx_out, cx_err, cx_ok) = run_cli_cwd(&cwd, &["stats", "summary", "--complexity", "low"]);
+    assert!(
+        cx_ok,
+        "stats summary --complexity low failed; stderr: {cx_err}"
+    );
     let cx_v = parse_json(&cx_out);
     assert_eq!(
         cx_v["filtered_records"], 1,
@@ -350,12 +388,14 @@ fn test_validate_plan_80k_limit() {
     });
 
     let plan_path = dir.join("plan.json");
-    fs::write(&plan_path, serde_json::to_string_pretty(&plan).expect("serialize plan"))
-        .expect("write plan.json");
+    fs::write(
+        &plan_path,
+        serde_json::to_string_pretty(&plan).expect("serialize plan"),
+    )
+    .expect("write plan.json");
 
     // validate plan exits 0 even when there are warnings
-    let (stdout, _stderr, _success) =
-        run_cli(&["validate", "plan", &plan_path.to_string_lossy()]);
+    let (stdout, _stderr, _success) = run_cli(&["validate", "plan", &plan_path.to_string_lossy()]);
     let v = parse_json(&stdout);
 
     let warnings = v["warnings"]
@@ -418,18 +458,25 @@ fn test_budget_estimate_cold_vs_warm() {
     });
 
     let plan_path = dir.join("plan.json");
-    fs::write(&plan_path, serde_json::to_string_pretty(&plan).expect("serialize plan"))
-        .expect("write plan.json");
+    fs::write(
+        &plan_path,
+        serde_json::to_string_pretty(&plan).expect("serialize plan"),
+    )
+    .expect("write plan.json");
     let plan_str = plan_path.to_string_lossy();
 
-    let (stdout_cold, stderr_cold, ok_cold) =
-        run_cli(&["budget", "estimate", &plan_str, "T-cold"]);
-    assert!(ok_cold, "budget estimate T-cold failed; stderr: {stderr_cold}");
+    let (stdout_cold, stderr_cold, ok_cold) = run_cli(&["budget", "estimate", &plan_str, "T-cold"]);
+    assert!(
+        ok_cold,
+        "budget estimate T-cold failed; stderr: {stderr_cold}"
+    );
     let v_cold = parse_json(&stdout_cold);
 
-    let (stdout_warm, stderr_warm, ok_warm) =
-        run_cli(&["budget", "estimate", &plan_str, "T-warm"]);
-    assert!(ok_warm, "budget estimate T-warm failed; stderr: {stderr_warm}");
+    let (stdout_warm, stderr_warm, ok_warm) = run_cli(&["budget", "estimate", &plan_str, "T-warm"]);
+    assert!(
+        ok_warm,
+        "budget estimate T-warm failed; stderr: {stderr_warm}"
+    );
     let v_warm = parse_json(&stdout_warm);
 
     let cold_spe = v_cold["breakdown"]["system_prompt_effective"]

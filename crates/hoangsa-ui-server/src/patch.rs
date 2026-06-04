@@ -7,7 +7,7 @@
 //!      the mtime, applies the patch, writes atomically. Returns 409 if the
 //!      file was edited externally between preview and apply.
 
-use json_patch::{patch as apply_patch, Patch};
+use json_patch::{Patch, patch as apply_patch};
 use serde::Deserialize;
 use serde_json::Value;
 use std::fs;
@@ -55,7 +55,9 @@ pub fn read_target(path: &Path) -> Result<(Value, Option<i128>), PatchError> {
             let v: Value = serde_json::from_str(&text).map_err(PatchError::InvalidTarget)?;
             Ok((v, mtime))
         }
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok((Value::Object(Default::default()), None)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            Ok((Value::Object(Default::default()), None))
+        }
         Err(e) => Err(e.into()),
     }
 }
@@ -81,7 +83,9 @@ pub fn apply(path: &Path, req: &PatchRequest) -> Result<PatchOutcome, PatchError
     }
     let after = apply_to_value(&before, &req.patch)?;
     write_atomic(path, &after)?;
-    let new_mtime = fs::metadata(path).ok().and_then(|m| mtime_ms(m.modified().ok()));
+    let new_mtime = fs::metadata(path)
+        .ok()
+        .and_then(|m| mtime_ms(m.modified().ok()));
     Ok(PatchOutcome {
         before,
         after,
@@ -94,7 +98,8 @@ fn apply_to_value(before: &Value, patch_json: &Value) -> Result<Value, PatchErro
     if patch_json.is_null() {
         return Ok(after);
     }
-    let patch: Patch = serde_json::from_value(patch_json.clone()).map_err(PatchError::InvalidPatch)?;
+    let patch: Patch =
+        serde_json::from_value(patch_json.clone()).map_err(PatchError::InvalidPatch)?;
     apply_patch(&mut after, &patch).map_err(PatchError::PatchFailed)?;
     Ok(after)
 }

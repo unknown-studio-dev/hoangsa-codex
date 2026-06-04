@@ -36,10 +36,7 @@ fn run(cwd: &std::path::Path, args: &[&str]) -> (String, String, Option<i32>) {
 fn install_fake_curl(dir: &std::path::Path, fixture: &str) -> std::path::PathBuf {
     fs::write(dir.join("body.json"), fixture).unwrap();
     let script = dir.join("curl");
-    let body = format!(
-        "#!/bin/sh\ncat \"{}/body.json\"\n",
-        dir.display()
-    );
+    let body = format!("#!/bin/sh\ncat \"{}/body.json\"\n", dir.display());
     fs::write(&script, body).unwrap();
     // chmod +x
     use std::os::unix::fs::PermissionsExt;

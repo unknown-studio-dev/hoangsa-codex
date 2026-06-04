@@ -16,12 +16,7 @@ fn captures_stdout_and_exit_code() {
 #[cfg(unix)]
 #[test]
 fn captures_stderr() {
-    let captured = exec::run(
-        "sh",
-        &["-c".into(), "printf oops >&2; exit 3".into()],
-        None,
-    )
-    .unwrap();
+    let captured = exec::run("sh", &["-c".into(), "printf oops >&2; exit 3".into()], None).unwrap();
     assert_eq!(captured.stderr, "oops");
     assert_eq!(captured.exit, 3);
 }

@@ -15,7 +15,7 @@
 use std::path::Path;
 use std::time::Duration;
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use thiserror::Error;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
@@ -167,7 +167,9 @@ mod tests {
             w.flush().await.unwrap();
         });
 
-        let out = call_memory_tool(&sock, "memory_show", json!({})).await.unwrap();
+        let out = call_memory_tool(&sock, "memory_show", json!({}))
+            .await
+            .unwrap();
         assert_eq!(out["data"]["memory_md"], "hello");
         assert_eq!(out["isError"], false);
         server.await.unwrap();

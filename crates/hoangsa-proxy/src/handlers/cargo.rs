@@ -97,5 +97,4 @@ mod tests {
         let out = compile_filter(&ctx(input)).stderr.unwrap();
         assert_eq!(out.matches('\n').count(), 1);
     }
-
 }

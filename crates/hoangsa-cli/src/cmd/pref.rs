@@ -196,16 +196,18 @@ pub fn cmd_set(project_dir: Option<&str>, key: Option<&str>, value: Option<&str>
         let preset = match preset {
             Some(p) => p,
             None => {
-                out(&json!({ "error": format!("Unknown profile: {}. Known profiles: full, balanced, minimal", profile_name) }));
+                out(
+                    &json!({ "error": format!("Unknown profile: {}. Known profiles: full, balanced, minimal", profile_name) }),
+                );
                 return;
             }
         };
         if let Some(obj) = config.as_object_mut() {
-            obj.insert("profile".to_string(), Value::String(profile_name.to_string()));
-            if let Some(prefs) = obj
-                .get_mut("preferences")
-                .and_then(|v| v.as_object_mut())
-            {
+            obj.insert(
+                "profile".to_string(),
+                Value::String(profile_name.to_string()),
+            );
+            if let Some(prefs) = obj.get_mut("preferences").and_then(|v| v.as_object_mut()) {
                 for (k, v) in preset {
                     prefs.insert(k.to_string(), v);
                 }
@@ -395,7 +397,11 @@ mod tests {
         assert_eq!(prefs["simplify_pass"], Value::Bool(true), "simplify_pass");
         assert_eq!(prefs["quality_gate"], Value::Bool(true), "quality_gate");
         assert_eq!(prefs["test_runs"].as_i64(), Some(3), "test_runs");
-        assert_eq!(prefs["research_mode"].as_str(), Some("full"), "research_mode");
+        assert_eq!(
+            prefs["research_mode"].as_str(),
+            Some("full"),
+            "research_mode"
+        );
         assert_eq!(prefs["context_mode"].as_str(), Some("full"), "context_mode");
         assert_eq!(prefs["memory_strict"], Value::Bool(true), "memory_strict");
     }
@@ -413,8 +419,16 @@ mod tests {
         assert_eq!(prefs["simplify_pass"], Value::Bool(false), "simplify_pass");
         assert_eq!(prefs["quality_gate"], Value::Bool(false), "quality_gate");
         assert_eq!(prefs["test_runs"].as_i64(), Some(1), "test_runs");
-        assert_eq!(prefs["research_mode"].as_str(), Some("inline"), "research_mode");
-        assert_eq!(prefs["context_mode"].as_str(), Some("selective"), "context_mode");
+        assert_eq!(
+            prefs["research_mode"].as_str(),
+            Some("inline"),
+            "research_mode"
+        );
+        assert_eq!(
+            prefs["context_mode"].as_str(),
+            Some("selective"),
+            "context_mode"
+        );
         assert_eq!(prefs["memory_strict"], Value::Bool(false), "memory_strict");
     }
 
@@ -429,10 +443,22 @@ mod tests {
         assert_eq!(prefs["simplify_pass"], Value::Bool(false), "simplify_pass");
         assert_eq!(prefs["quality_gate"], Value::Bool(false), "quality_gate");
         assert_eq!(prefs["test_runs"].as_i64(), Some(0), "test_runs");
-        assert_eq!(prefs["research_mode"].as_str(), Some("inline"), "research_mode");
-        assert_eq!(prefs["context_mode"].as_str(), Some("selective"), "context_mode");
+        assert_eq!(
+            prefs["research_mode"].as_str(),
+            Some("inline"),
+            "research_mode"
+        );
+        assert_eq!(
+            prefs["context_mode"].as_str(),
+            Some("selective"),
+            "context_mode"
+        );
         assert_eq!(prefs["memory_strict"], Value::Bool(false), "memory_strict");
-        assert_eq!(config["profile"].as_str(), Some("minimal"), "profile key set at root");
+        assert_eq!(
+            config["profile"].as_str(),
+            Some("minimal"),
+            "profile key set at root"
+        );
     }
 
     #[test]
@@ -456,12 +482,14 @@ mod tests {
 
     #[test]
     fn test_known_keys_include_new_five() {
-        for key in &["simplify_pass", "quality_gate", "test_runs", "context_mode", "memory_strict"] {
-            assert!(
-                KNOWN_KEYS.contains(key),
-                "expected {} in KNOWN_KEYS",
-                key
-            );
+        for key in &[
+            "simplify_pass",
+            "quality_gate",
+            "test_runs",
+            "context_mode",
+            "memory_strict",
+        ] {
+            assert!(KNOWN_KEYS.contains(key), "expected {} in KNOWN_KEYS", key);
         }
     }
 

@@ -320,11 +320,15 @@ pub fn discover_orphan_slugs(hoangsa_home: &Path, registry: &Registry) -> Vec<St
     };
     let mut orphans = Vec::new();
     for entry in entries.flatten() {
-        let Ok(file_type) = entry.file_type() else { continue };
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
         if !file_type.is_dir() {
             continue;
         }
-        let Some(name) = entry.file_name().to_str().map(String::from) else { continue };
+        let Some(name) = entry.file_name().to_str().map(String::from) else {
+            continue;
+        };
         if registry.find(&name).is_none() {
             orphans.push(name);
         }
@@ -386,7 +390,11 @@ mod tests {
         std::thread::sleep(std::time::Duration::from_millis(1100));
 
         let p2 = reg.register(&project_dir).clone();
-        assert_eq!(reg.projects.len(), 1, "duplicate register should not add a row");
+        assert_eq!(
+            reg.projects.len(),
+            1,
+            "duplicate register should not add a row"
+        );
         assert_eq!(p2.slug, slug_first);
         assert_eq!(p2.registered_at, registered_at_first);
         assert!(p2.last_used_at >= registered_at_first);

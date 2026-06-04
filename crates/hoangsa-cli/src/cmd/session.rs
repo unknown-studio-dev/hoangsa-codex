@@ -32,7 +32,16 @@ fn slugify(name: &str) -> String {
 /// Canonical session types. Shared with `hook::find_latest_session` so the
 /// Stop-hook routing stays in sync with `session init` — adding a type here
 /// is the single edit needed.
-pub const KNOWN_TYPES: &[&str] = &["feat", "fix", "refactor", "perf", "test", "docs", "chore", "brainstorm"];
+pub const KNOWN_TYPES: &[&str] = &[
+    "feat",
+    "fix",
+    "refactor",
+    "perf",
+    "test",
+    "docs",
+    "chore",
+    "brainstorm",
+];
 
 /// `session init <type> <name> [sessions_dir]`
 pub fn cmd_init(

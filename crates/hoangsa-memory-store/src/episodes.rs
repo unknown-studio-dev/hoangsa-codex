@@ -38,9 +38,9 @@
 use std::path::Path;
 use std::sync::Arc;
 
+use hoangsa_memory_core::{Error, Event, EventId, Result};
 use parking_lot::Mutex;
 use rusqlite::{Connection, params};
-use hoangsa_memory_core::{Error, Event, EventId, Result};
 use time::OffsetDateTime;
 
 /// A single row returned from an episode search.

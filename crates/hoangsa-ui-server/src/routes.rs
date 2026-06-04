@@ -1,13 +1,13 @@
 use axum::{
+    Json,
     extract::{Path, State},
     http::StatusCode,
     response::IntoResponse,
-    Json,
 };
 use hoangsa_cli::cmd::rule::Rule;
-use hoangsa_memory_core::projects::{discover_orphan_slugs, Registry};
+use hoangsa_memory_core::projects::{Registry, discover_orphan_slugs};
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -256,7 +256,11 @@ pub async fn rules_add(
     State(state): State<Arc<AppState>>,
     Json(body): Json<AddRuleBody>,
 ) -> impl IntoResponse {
-    match rules::add(&state.current().project_dir, body.rule, body.expected_mtime_ms) {
+    match rules::add(
+        &state.current().project_dir,
+        body.rule,
+        body.expected_mtime_ms,
+    ) {
         Ok(cfg) => rules_response(&state, json!({ "rules": cfg.rules })),
         Err(e) => rule_error(e),
     }
@@ -274,7 +278,12 @@ pub async fn rules_toggle(
     Path(id): Path<String>,
     Json(body): Json<ToggleBody>,
 ) -> impl IntoResponse {
-    match rules::set_enabled(&state.current().project_dir, &id, body.enabled, body.expected_mtime_ms) {
+    match rules::set_enabled(
+        &state.current().project_dir,
+        &id,
+        body.enabled,
+        body.expected_mtime_ms,
+    ) {
         Ok(cfg) => rules_response(&state, json!({ "rules": cfg.rules })),
         Err(e) => rule_error(e),
     }
@@ -309,7 +318,11 @@ pub async fn rules_replace(
     Path(_id): Path<String>,
     Json(body): Json<ReplaceBody>,
 ) -> impl IntoResponse {
-    match rules::replace(&state.current().project_dir, body.rule, body.expected_mtime_ms) {
+    match rules::replace(
+        &state.current().project_dir,
+        body.rule,
+        body.expected_mtime_ms,
+    ) {
         Ok(cfg) => rules_response(&state, json!({ "rules": cfg.rules })),
         Err(e) => rule_error(e),
     }
@@ -526,9 +539,7 @@ pub async fn projects_remove(
         Err(e) => return registry_error(e.to_string()),
     };
     let removed = registry.remove(&slug);
-    if removed
-        && let Err(e) = registry.save(&state.global_dir)
-    {
+    if removed && let Err(e) = registry.save(&state.global_dir) {
         return registry_error(e.to_string());
     }
     Json(json!({ "slug": slug, "removed": removed })).into_response()
@@ -548,11 +559,7 @@ fn registry_error(msg: String) -> axum::response::Response {
 
 /// Forward a tool call to the daemon for the active project and shape
 /// the success / failure into a uniform Axum response.
-async fn call_tool(
-    state: &AppState,
-    tool: &str,
-    arguments: Value,
-) -> axum::response::Response {
+async fn call_tool(state: &AppState, tool: &str, arguments: Value) -> axum::response::Response {
     let current = state.current();
     let sock = memory::socket_for(&current.project_dir, &state.global_dir);
     match mcp_client::call_memory_tool(&sock, tool, arguments).await {

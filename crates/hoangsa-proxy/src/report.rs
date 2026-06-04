@@ -94,7 +94,11 @@ impl TrimReport {
         // (trimmed bytes or stripped ANSI).
         if self.was_trimmed() || self.color_stripped {
             let saved = before.saturating_sub(after);
-            let pct = if before > 0 { (saved * 100) / before } else { 0 };
+            let pct = if before > 0 {
+                (saved * 100) / before
+            } else {
+                0
+            };
             let handler = self.handler.as_deref().unwrap_or("filter");
             out.push(format!(
                 "[hsp] handler={handler} before_bytes={before} after_bytes={after} \
@@ -242,7 +246,11 @@ mod tests {
         r.after_stdout_bytes = 100;
         let lines = r.render_lines();
         assert!(lines.iter().any(|l| l.contains("exit=101")));
-        assert!(lines.iter().any(|l| l.starts_with("[hsp info] child_exit=101")));
+        assert!(
+            lines
+                .iter()
+                .any(|l| l.starts_with("[hsp info] child_exit=101"))
+        );
     }
 
     #[test]

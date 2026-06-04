@@ -4,11 +4,14 @@
 //! diff/apply is atomic, and rule CRUD round-trips. The SPA is not exercised
 //! here — `index.html` may not exist if the consumer hasn't run `make ui`.
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::path::PathBuf;
 use std::time::Duration;
 
-fn spawn_server(project_dir: PathBuf, fake_home: &std::path::Path) -> (std::process::Child, String) {
+fn spawn_server(
+    project_dir: PathBuf,
+    fake_home: &std::path::Path,
+) -> (std::process::Child, String) {
     let bin = env!("CARGO_BIN_EXE_hoangsa-ui");
     let mut child = std::process::Command::new(bin)
         .arg(&project_dir)
@@ -75,7 +78,11 @@ async fn full_round_trip() {
         .unwrap();
 
     // --- /api/health requires token ---
-    let r = client.get(format!("{base}/api/health")).send().await.unwrap();
+    let r = client
+        .get(format!("{base}/api/health"))
+        .send()
+        .await
+        .unwrap();
     assert_eq!(r.status(), 403, "health without token should 403");
 
     let r: Value = client
@@ -180,7 +187,10 @@ async fn projects_register_switch_round_trip() {
         .json()
         .await
         .unwrap();
-    assert_eq!(listing["current"]["path"], proj_a.path().canonicalize().unwrap().to_str().unwrap());
+    assert_eq!(
+        listing["current"]["path"],
+        proj_a.path().canonicalize().unwrap().to_str().unwrap()
+    );
     let registered_slugs: Vec<String> = listing["projects"]
         .as_array()
         .unwrap()
@@ -188,7 +198,9 @@ async fn projects_register_switch_round_trip() {
         .filter_map(|p| p["slug"].as_str().map(String::from))
         .collect();
     assert!(
-        registered_slugs.iter().any(|s| s == listing["current"]["slug"].as_str().unwrap()),
+        registered_slugs
+            .iter()
+            .any(|s| s == listing["current"]["slug"].as_str().unwrap()),
         "boot project should be auto-registered"
     );
 
@@ -278,10 +290,12 @@ async fn memory_routes_degraded_without_daemon() {
     assert!(files["user"]["body"].is_null());
     assert!(files["memory"]["body"].is_null());
     assert!(files["lessons"]["body"].is_null());
-    assert!(files["memory"]["path"]
-        .as_str()
-        .unwrap()
-        .ends_with("MEMORY.md"));
+    assert!(
+        files["memory"]["path"]
+            .as_str()
+            .unwrap()
+            .ends_with("MEMORY.md")
+    );
 
     // Daemon-backed route bounces as 503 with a structured error.
     let recall = client

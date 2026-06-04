@@ -19,5 +19,5 @@ mod rules;
 mod server;
 mod state;
 
-pub use server::run;
 pub use server::RunOptions;
+pub use server::run;

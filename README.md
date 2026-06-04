@@ -139,6 +139,7 @@ templates.
 hoangsa-cli install --target codex --global
 hoangsa-cli install --target codex --local
 hoangsa-cli install --target both --local
+hoangsa-cli install --target codex --local --codex-memory-root "$PWD/.hoangsa/memory"
 ```
 
 Global Codex installs write `~/.codex/config.toml`; local installs write
@@ -157,7 +158,12 @@ RUST_LOG = "info"
 
 Do not set global `HOANGSA_MEMORY_ROOT`; the MCP server resolves the
 right Hoangsa memory project from the Codex session working directory.
-Use a project-local override only when intentionally pinning one project.
+Use `--codex-memory-root <path>` only with a local Codex install when
+intentionally pinning one project. The override is written only to the
+project-local `.codex/config.toml`.
+
+Codex TOML merges preserve unrelated settings and MCP servers semantically
+after parse/write. They do not preserve comments or original formatting.
 
 After installing, start Codex in the project and run `/mcp` to confirm
 that `hoangsa-memory` tools are listed.
@@ -190,7 +196,8 @@ codex plugin add hoangsa-codex@hoangsa-local
 
 Hooks are not bundled through the plugin yet. Use
 `hoangsa-cli install --target codex --local` for full project-local
-Codex wiring, including hooks.
+Codex wiring, including hooks, until Codex plugin hook packaging is
+validated against the target Codex release.
 
 ---
 

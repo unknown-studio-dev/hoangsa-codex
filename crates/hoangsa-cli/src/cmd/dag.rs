@@ -62,9 +62,10 @@ pub fn detect_dangling(tasks: &[Value]) -> Vec<String> {
         if let Some(deps) = t.get("depends_on").and_then(|v| v.as_array()) {
             for dep in deps {
                 if let Some(dep_str) = dep.as_str()
-                    && !ids.contains(dep_str) {
-                        dangling.push(format!("{tid} depends_on unknown: {dep_str}"));
-                    }
+                    && !ids.contains(dep_str)
+                {
+                    dangling.push(format!("{tid} depends_on unknown: {dep_str}"));
+                }
             }
         }
     }

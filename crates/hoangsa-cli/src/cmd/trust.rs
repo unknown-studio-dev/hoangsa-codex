@@ -55,11 +55,7 @@ fn read_trust_store() -> BTreeMap<String, Value> {
     store
         .get("trusted")
         .and_then(|t| t.as_object())
-        .map(|obj| {
-            obj.iter()
-                .map(|(k, v)| (k.clone(), v.clone()))
-                .collect()
-        })
+        .map(|obj| obj.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
         .unwrap_or_default()
 }
 

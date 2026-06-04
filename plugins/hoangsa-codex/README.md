@@ -14,3 +14,6 @@ and hook entries.
 Hooks are intentionally not bundled in this plugin yet. Use the direct CLI
 installer for Codex hook setup until plugin hook packaging is validated against
 the target Codex release.
+
+The direct installer preserves Codex TOML settings semantically after
+parse/write, but does not preserve comments or original formatting.

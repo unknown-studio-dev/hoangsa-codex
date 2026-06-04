@@ -1,9 +1,9 @@
 //! Integration tests for the lesson-confidence slice of
 //! [`MemoryManager::forget_pass`].
 
-use tempfile::tempdir;
 use hoangsa_memory_core::{Event, EventId, Lesson, MemoryKind, MemoryMeta};
 use hoangsa_memory_policy::MemoryManager;
+use tempfile::tempdir;
 use time::{Duration, OffsetDateTime};
 
 fn lesson(trigger: &str, advice: &str, success: u64, failure: u64) -> Lesson {

@@ -107,7 +107,9 @@ fn read_rules_config(project_dir: &str) -> Result<Option<RulesConfig>, Box<dyn s
     Ok(Some(config))
 }
 
-pub fn read_rules_config_pub(project_dir: &str) -> Result<Option<RulesConfig>, Box<dyn std::error::Error>> {
+pub fn read_rules_config_pub(
+    project_dir: &str,
+) -> Result<Option<RulesConfig>, Box<dyn std::error::Error>> {
     read_rules_config(project_dir)
 }
 
@@ -161,10 +163,7 @@ pub fn cmd_rule_gate() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         // Check tool_name matches rule.matcher (pipe-split list)
-        let matcher_matches = rule
-            .matcher
-            .split('|')
-            .any(|m| m.trim() == tool_name);
+        let matcher_matches = rule.matcher.split('|').any(|m| m.trim() == tool_name);
         if !matcher_matches {
             continue;
         }
@@ -180,7 +179,14 @@ pub fn cmd_rule_gate() -> Result<(), Box<dyn std::error::Error>> {
                 // First match wins for block
                 let matched_condition = rule.conditions.first();
                 let field_info = matched_condition
-                    .map(|c| format!("Field: {} matched {} '{}'", c.field, op_label(&c.op), c.value))
+                    .map(|c| {
+                        format!(
+                            "Field: {} matched {} '{}'",
+                            c.field,
+                            op_label(&c.op),
+                            c.value
+                        )
+                    })
                     .unwrap_or_default();
                 let reason = format!(
                     "⛔ RULE VIOLATION: {}\n\nRule: {}\n{}\nAction: BLOCK\n\n{}",
@@ -201,9 +207,7 @@ pub fn cmd_rule_gate() -> Result<(), Box<dyn std::error::Error>> {
     } else {
         let reason = warnings
             .iter()
-            .map(|(id, name, msg)| {
-                format!("⚠️ RULE WARNING: {id}\n\nRule: {name}\n\n{msg}")
-            })
+            .map(|(id, name, msg)| format!("⚠️ RULE WARNING: {id}\n\nRule: {name}\n\n{msg}"))
             .collect::<Vec<_>>()
             .join("\n\n---\n\n");
         out(&json!({"decision": "approve", "reason": reason}));
@@ -222,7 +226,10 @@ fn op_label(op: &ConditionOp) -> &'static str {
     }
 }
 
-fn write_rules_config(project_dir: &str, config: &RulesConfig) -> Result<(), Box<dyn std::error::Error>> {
+fn write_rules_config(
+    project_dir: &str,
+    config: &RulesConfig,
+) -> Result<(), Box<dyn std::error::Error>> {
     let hoangsa_dir = Path::new(project_dir).join(".hoangsa");
     if !hoangsa_dir.exists() {
         fs::create_dir_all(&hoangsa_dir)?;
@@ -256,7 +263,11 @@ pub fn cmd_rule_list(project_dir: &str) -> Result<(), Box<dyn std::error::Error>
 /// `.hoangsa/sessions/brainstorm/rule-enforcement-without-duplication/BRAINSTORM.md`.
 pub fn default_rules() -> Vec<Rule> {
     fn cond(field: &str, op: ConditionOp, value: &str) -> Condition {
-        Condition { field: field.to_string(), op, value: value.to_string() }
+        Condition {
+            field: field.to_string(),
+            op,
+            value: value.to_string(),
+        }
     }
     #[allow(clippy::too_many_arguments)]
     fn rule(
@@ -307,7 +318,11 @@ pub fn default_rules() -> Vec<Rule> {
             "No todo!/unimplemented! in commits",
             Enforcement::Prompt,
             "Edit|Write",
-            vec![cond("new_string", ConditionOp::Regex, r"\b(todo!|unimplemented!)")],
+            vec![cond(
+                "new_string",
+                ConditionOp::Regex,
+                r"\b(todo!|unimplemented!)",
+            )],
             RuleAction::Warn,
             "Do not commit unimplemented code — finish it or create an issue instead",
             None,
@@ -317,7 +332,11 @@ pub fn default_rules() -> Vec<Rule> {
             "Block git add --force",
             Enforcement::Prompt,
             "Bash",
-            vec![cond("command", ConditionOp::Regex, r"git\s+add\s+(-f|--force)")],
+            vec![cond(
+                "command",
+                ConditionOp::Regex,
+                r"git\s+add\s+(-f|--force)",
+            )],
             RuleAction::Block,
             "Do not force-add gitignored files — check .gitignore or remove the -f flag",
             None,
@@ -347,7 +366,11 @@ pub fn default_rules() -> Vec<Rule> {
             "Block git push --force to main/master",
             Enforcement::Hook,
             "Bash",
-            vec![cond("command", ConditionOp::Regex, r"git\s+push.*--force.*(main|master)")],
+            vec![cond(
+                "command",
+                ConditionOp::Regex,
+                r"git\s+push.*--force.*(main|master)",
+            )],
             RuleAction::Block,
             "Never force-push to main/master — rewrites shared history",
             None,
@@ -401,10 +424,15 @@ pub fn default_rules() -> Vec<Rule> {
 pub fn cmd_rule_init(project_dir: &str) -> Result<(), Box<dyn std::error::Error>> {
     let path = rules_path(project_dir);
     if path.exists() {
-        out(&json!({ "success": true, "already_initialized": true, "path": path.to_string_lossy() }));
+        out(
+            &json!({ "success": true, "already_initialized": true, "path": path.to_string_lossy() }),
+        );
         return Ok(());
     }
-    let config = RulesConfig { version: "1.0".to_string(), rules: default_rules() };
+    let config = RulesConfig {
+        version: "1.0".to_string(),
+        rules: default_rules(),
+    };
     write_rules_config(project_dir, &config)?;
     out(&json!({
         "success": true,
@@ -436,8 +464,7 @@ pub fn cmd_rule_add(project_dir: &str, rule_json: &str) -> Result<(), Box<dyn st
 }
 
 pub fn cmd_rule_remove(project_dir: &str, rule_id: &str) -> Result<(), Box<dyn std::error::Error>> {
-    let mut config = read_rules_config(project_dir)?
-        .ok_or("rules.json not found")?;
+    let mut config = read_rules_config(project_dir)?.ok_or("rules.json not found")?;
 
     let before = config.rules.len();
     config.rules.retain(|r| r.id != rule_id);
@@ -453,10 +480,12 @@ pub fn cmd_rule_remove(project_dir: &str, rule_id: &str) -> Result<(), Box<dyn s
 }
 
 pub fn cmd_rule_enable(project_dir: &str, rule_id: &str) -> Result<(), Box<dyn std::error::Error>> {
-    let mut config = read_rules_config(project_dir)?
-        .ok_or("rules.json not found")?;
+    let mut config = read_rules_config(project_dir)?.ok_or("rules.json not found")?;
 
-    let rule = config.rules.iter_mut().find(|r| r.id == rule_id)
+    let rule = config
+        .rules
+        .iter_mut()
+        .find(|r| r.id == rule_id)
         .ok_or_else(|| format!("Rule '{rule_id}' not found"))?;
     rule.enabled = true;
     let id = rule.id.clone();
@@ -467,11 +496,16 @@ pub fn cmd_rule_enable(project_dir: &str, rule_id: &str) -> Result<(), Box<dyn s
     Ok(())
 }
 
-pub fn cmd_rule_disable(project_dir: &str, rule_id: &str) -> Result<(), Box<dyn std::error::Error>> {
-    let mut config = read_rules_config(project_dir)?
-        .ok_or("rules.json not found")?;
+pub fn cmd_rule_disable(
+    project_dir: &str,
+    rule_id: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut config = read_rules_config(project_dir)?.ok_or("rules.json not found")?;
 
-    let rule = config.rules.iter_mut().find(|r| r.id == rule_id)
+    let rule = config
+        .rules
+        .iter_mut()
+        .find(|r| r.id == rule_id)
         .ok_or_else(|| format!("Rule '{rule_id}' not found"))?;
     rule.enabled = false;
     let id = rule.id.clone();
@@ -598,12 +632,16 @@ pub fn cmd_rule_sync(project_dir: &str) -> Result<(), Box<dyn std::error::Error>
     const START_MARKER: &str = "<!-- hoangsa-rules-start -->";
     const END_MARKER: &str = "<!-- hoangsa-rules-end -->";
 
-    let updated = if let (Some(start_idx), Some(end_idx)) = (
-        existing.find(START_MARKER),
-        existing.find(END_MARKER),
-    ) {
+    let updated = if let (Some(start_idx), Some(end_idx)) =
+        (existing.find(START_MARKER), existing.find(END_MARKER))
+    {
         let end_of_end = end_idx + END_MARKER.len();
-        format!("{}{}{}", &existing[..start_idx], block, &existing[end_of_end..])
+        format!(
+            "{}{}{}",
+            &existing[..start_idx],
+            block,
+            &existing[end_of_end..]
+        )
     } else if existing.is_empty() {
         block.clone()
     } else if existing.ends_with('\n') {
@@ -627,7 +665,12 @@ pub fn cmd_rule_sync(project_dir: &str) -> Result<(), Box<dyn std::error::Error>
         agents_existing.find(END_MARKER),
     ) {
         let end_of_end = end_idx + END_MARKER.len();
-        format!("{}{}{}", &agents_existing[..start_idx], block, &agents_existing[end_of_end..])
+        format!(
+            "{}{}{}",
+            &agents_existing[..start_idx],
+            block,
+            &agents_existing[end_of_end..]
+        )
     } else if agents_existing.is_empty() {
         block
     } else if agents_existing.ends_with('\n') {
@@ -774,7 +817,11 @@ mod tests {
         // Condition references a field not present in tool_input → false
         let rule = make_rule(
             "Edit",
-            vec![make_condition("nonexistent_field", ConditionOp::Contains, "foo")],
+            vec![make_condition(
+                "nonexistent_field",
+                ConditionOp::Contains,
+                "foo",
+            )],
         );
         let input = json!({ "path": "dist/bundle.js" });
         assert!(!evaluate_rule_conditions(&rule, &input));
@@ -792,11 +839,11 @@ mod tests {
         let tool_name = "Edit";
         let tool_input = json!({ "path": "dist/bundle.js" });
 
-        let matcher_matches = rule
-            .matcher
-            .split('|')
-            .any(|m| m.trim() == tool_name);
-        assert!(matcher_matches, "Expected tool_name 'Edit' to match matcher 'Edit|Write'");
+        let matcher_matches = rule.matcher.split('|').any(|m| m.trim() == tool_name);
+        assert!(
+            matcher_matches,
+            "Expected tool_name 'Edit' to match matcher 'Edit|Write'"
+        );
 
         // Conditions also pass, so the rule would fire
         assert!(evaluate_rule_conditions(&rule, &tool_input));
@@ -810,7 +857,8 @@ mod tests {
             "id": "test", "name": "Test", "enabled": true,
             "matcher": "Bash", "conditions": [], "action": "block", "message": "msg"
         }"#;
-        let rule: Rule = serde_json::from_str(json_str).expect("should parse without enforcement field");
+        let rule: Rule =
+            serde_json::from_str(json_str).expect("should parse without enforcement field");
         assert_eq!(rule.enforcement, Enforcement::Prompt);
     }
 
@@ -820,7 +868,8 @@ mod tests {
             "id": "test", "name": "Test", "enabled": true, "enforcement": "hook",
             "matcher": "Bash", "conditions": [], "action": "block", "message": "msg"
         }"#;
-        let rule: Rule = serde_json::from_str(json_str).expect("should parse with enforcement=hook");
+        let rule: Rule =
+            serde_json::from_str(json_str).expect("should parse with enforcement=hook");
         assert_eq!(rule.enforcement, Enforcement::Hook);
         let serialized = serde_json::to_string(&rule).expect("should serialize");
         assert!(serialized.contains(r#""enforcement":"hook""#));
@@ -878,10 +927,10 @@ mod tests {
         );
         let tool_name = "Bash";
 
-        let matcher_matches = rule
-            .matcher
-            .split('|')
-            .any(|m| m.trim() == tool_name);
-        assert!(!matcher_matches, "Expected tool_name 'Bash' NOT to match matcher 'Edit|Write'");
+        let matcher_matches = rule.matcher.split('|').any(|m| m.trim() == tool_name);
+        assert!(
+            !matcher_matches,
+            "Expected tool_name 'Bash' NOT to match matcher 'Edit|Write'"
+        );
     }
 }
