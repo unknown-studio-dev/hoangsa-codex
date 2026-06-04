@@ -1,7 +1,239 @@
 use crate::helpers::{out, read_json};
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum HookPlatform {
+    Claude,
+    Codex,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum HookEventKind {
+    SessionStart,
+    PreToolUse,
+    PostToolUse,
+    PreCompact,
+    Stop,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HookToolCategory {
+    EditWrite,
+    Bash,
+    Memory,
+    Other,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct NormalizedHookEvent {
+    pub platform: HookPlatform,
+    pub event: HookEventKind,
+    pub tool_name: Option<String>,
+    pub category: HookToolCategory,
+    pub command: Option<String>,
+    pub file_path: Option<PathBuf>,
+    pub transcript_path: Option<PathBuf>,
+    pub cwd: PathBuf,
+    pub raw: serde_json::Value,
+}
+
+pub fn normalize_hook_event(
+    platform: HookPlatform,
+    event: HookEventKind,
+    cwd: &str,
+    raw: serde_json::Value,
+) -> NormalizedHookEvent {
+    let tool_name = first_string(
+        &raw,
+        &[
+            &["tool_name"],
+            &["toolName"],
+            &["tool"],
+            &["tool", "name"],
+            &["tool_call", "name"],
+            &["toolCall", "name"],
+        ],
+    )
+    .map(normalize_tool_name);
+
+    let command = first_string(
+        &raw,
+        &[
+            &["tool_input", "command"],
+            &["toolInput", "command"],
+            &["input", "command"],
+            &["arguments", "command"],
+            &["command"],
+            &["cmd"],
+        ],
+    )
+    .map(str::to_string);
+
+    let file_path = first_string(
+        &raw,
+        &[
+            &["tool_input", "file_path"],
+            &["tool_input", "path"],
+            &["toolInput", "file_path"],
+            &["toolInput", "path"],
+            &["input", "file_path"],
+            &["input", "path"],
+            &["arguments", "file_path"],
+            &["arguments", "path"],
+            &["file_path"],
+            &["path"],
+        ],
+    )
+    .map(PathBuf::from);
+
+    let transcript_path = first_string(
+        &raw,
+        &[
+            &["transcript_path"],
+            &["transcriptPath"],
+            &["transcript", "path"],
+        ],
+    )
+    .map(PathBuf::from);
+
+    let cwd = first_string(
+        &raw,
+        &[&["cwd"], &["workspace", "cwd"], &["workspace_root"]],
+    )
+    .map(PathBuf::from)
+    .unwrap_or_else(|| PathBuf::from(cwd));
+
+    let category = tool_name
+        .as_deref()
+        .map(tool_category)
+        .unwrap_or(HookToolCategory::Other);
+
+    NormalizedHookEvent {
+        platform,
+        event,
+        tool_name,
+        category,
+        command,
+        file_path,
+        transcript_path,
+        cwd,
+        raw,
+    }
+}
+
+fn first_string<'a>(v: &'a serde_json::Value, paths: &[&[&str]]) -> Option<&'a str> {
+    for path in paths {
+        let mut cur = v;
+        let mut found = true;
+        for key in *path {
+            match cur.get(*key) {
+                Some(next) => cur = next,
+                None => {
+                    found = false;
+                    break;
+                }
+            }
+        }
+        if found && let Some(s) = cur.as_str().filter(|s| !s.is_empty()) {
+            return Some(s);
+        }
+    }
+    None
+}
+
+fn normalize_tool_name(name: &str) -> String {
+    match name {
+        "shell" | "bash" | "exec_command" | "unified_exec" => "Bash".to_string(),
+        "write_file" | "edit_file" | "apply_patch" | "patch" => name.to_string(),
+        other => other.to_string(),
+    }
+}
+
+fn tool_category(name: &str) -> HookToolCategory {
+    match name {
+        "Edit" | "Write" | "MultiEdit" | "apply_patch" | "write_file" | "edit_file" | "patch" => {
+            HookToolCategory::EditWrite
+        }
+        "Bash" => HookToolCategory::Bash,
+        "mcp__hoangsa-memory__memory_impact"
+        | "mcp__hoangsa-memory__memory_detect_changes"
+        | "mcp__hoangsa-memory__memory_recall" => HookToolCategory::Memory,
+        _ => HookToolCategory::Other,
+    }
+}
+
+fn enforcement_tool_name(event: &NormalizedHookEvent) -> String {
+    match event.category {
+        HookToolCategory::Bash => "Bash".to_string(),
+        HookToolCategory::EditWrite => match event.tool_name.as_deref() {
+            Some("Edit" | "Write" | "MultiEdit") => event.tool_name.clone().unwrap_or_default(),
+            _ => "Write".to_string(),
+        },
+        _ => event.tool_name.clone().unwrap_or_default(),
+    }
+}
+
+fn normalized_to_claude_payload(event: &NormalizedHookEvent) -> serde_json::Value {
+    let mut tool_input = serde_json::Map::new();
+    if let Some(command) = &event.command {
+        tool_input.insert("command".to_string(), json!(command));
+    }
+    if let Some(file_path) = &event.file_path {
+        tool_input.insert(
+            "file_path".to_string(),
+            json!(file_path.to_string_lossy().to_string()),
+        );
+    }
+    if let Some(obj) = event.raw.get("tool_input").and_then(|v| v.as_object()) {
+        for (k, v) in obj {
+            tool_input.entry(k.clone()).or_insert_with(|| v.clone());
+        }
+    }
+    if let Some(obj) = event.raw.get("input").and_then(|v| v.as_object()) {
+        for (k, v) in obj {
+            tool_input.entry(k.clone()).or_insert_with(|| v.clone());
+        }
+    }
+    json!({
+        "hook_event_name": format!("{:?}", event.event),
+        "tool_name": enforcement_tool_name(event),
+        "tool_input": serde_json::Value::Object(tool_input),
+        "cwd": event.cwd,
+        "transcript_path": event.transcript_path,
+        "raw": event.raw,
+    })
+}
+
+fn read_stdin_value() -> serde_json::Value {
+    use std::io::Read as _;
+    let mut input = String::new();
+    std::io::stdin().read_to_string(&mut input).ok();
+    serde_json::from_str(&input).unwrap_or(json!({}))
+}
+
+fn parse_platform(s: &str) -> Option<HookPlatform> {
+    match s {
+        "claude" | "Claude" => Some(HookPlatform::Claude),
+        "codex" | "Codex" => Some(HookPlatform::Codex),
+        _ => None,
+    }
+}
+
+fn parse_event_kind(s: &str) -> Option<HookEventKind> {
+    match s {
+        "SessionStart" | "session-start" | "session_start" => Some(HookEventKind::SessionStart),
+        "PreToolUse" | "pre-tool-use" | "pre_tool_use" => Some(HookEventKind::PreToolUse),
+        "PostToolUse" | "post-tool-use" | "post_tool_use" => Some(HookEventKind::PostToolUse),
+        "PreCompact" | "pre-compact" | "pre_compact" => Some(HookEventKind::PreCompact),
+        "Stop" | "stop" => Some(HookEventKind::Stop),
+        _ => None,
+    }
+}
 
 /// `hook stop-check [sessions_dir]`
 ///
@@ -70,6 +302,58 @@ pub fn cmd_stop_check(sessions_dir: Option<&str>, cwd: &str) {
     }
 }
 
+pub fn cmd_platform_hook(platform: &str, event: &str, handler: Option<&str>, cwd: &str) {
+    let Some(platform) = parse_platform(platform) else {
+        out(&json!({"decision": "approve", "reason": "HOANGSA: unsupported hook platform"}));
+        return;
+    };
+    let Some(event_kind) = parse_event_kind(event) else {
+        out(&json!({"decision": "approve", "reason": "HOANGSA: unsupported hook event"}));
+        return;
+    };
+    let raw = read_stdin_value();
+    let normalized = normalize_hook_event(platform, event_kind, cwd, raw);
+    let payload = normalized_to_claude_payload(&normalized);
+    let effective_cwd = normalized.cwd.to_string_lossy().to_string();
+
+    match (platform, event_kind, handler.unwrap_or("")) {
+        (HookPlatform::Claude, _, _) => out(&payload),
+        (HookPlatform::Codex, HookEventKind::SessionStart, _) => {
+            clear_enforcement_state(&effective_cwd);
+            out(&session_start_response(&effective_cwd));
+        }
+        (HookPlatform::Codex, HookEventKind::PreToolUse, "lesson-guard") => {
+            out(&lesson_guard_decision(&effective_cwd, &payload));
+        }
+        (HookPlatform::Codex, HookEventKind::PreToolUse, _) => {
+            out(&enforce_decision(&effective_cwd, &payload));
+        }
+        (HookPlatform::Codex, HookEventKind::PostToolUse, _) => {
+            out(&post_enforce_decision(&effective_cwd, &payload));
+        }
+        (HookPlatform::Codex, HookEventKind::PreCompact, _) => {
+            if normalized.transcript_path.is_some() {
+                out(
+                    &json!({"decision": "approve", "reason": "HOANGSA: Codex transcript archive ingestion is not enabled yet"}),
+                );
+            } else {
+                out(
+                    &json!({"decision": "approve", "reason": "HOANGSA: skipped archive ingest; Codex payload did not include transcript_path"}),
+                );
+            }
+        }
+        (HookPlatform::Codex, HookEventKind::Stop, _) => {
+            match evaluate_reflect_prompt(&effective_cwd, &normalized.raw.to_string()) {
+                ReflectOutcome::Skip => out(&json!({"decision": "approve"})),
+                ReflectOutcome::Prompt(reason) => out(&json!({
+                    "decision": "block",
+                    "reason": reason,
+                })),
+            }
+        }
+    }
+}
+
 /// Reason text injected into the Stop hook when the session did real work
 /// but the agent hasn't reflected yet. Surfaces as a system message the
 /// agent must respond to before the conversation can terminate.
@@ -87,8 +371,7 @@ enum ReflectOutcome {
 /// side effect when it returns `Prompt` so the next Stop in this session
 /// short-circuits to `Skip`.
 fn evaluate_reflect_prompt(cwd: &str, stdin_raw: &str) -> ReflectOutcome {
-    let payload: serde_json::Value =
-        serde_json::from_str(stdin_raw.trim()).unwrap_or(json!({}));
+    let payload: serde_json::Value = serde_json::from_str(stdin_raw.trim()).unwrap_or(json!({}));
 
     // Claude Code sets stop_hook_active=true while it is already continuing
     // from a previous Stop-hook block. Re-blocking here would loop forever.
@@ -139,15 +422,12 @@ fn reflect_sentinel_path(cwd: &str) -> std::path::PathBuf {
 /// If a recalled lesson contains "NEVER" + a path fragment that matches
 /// the file being edited → block. Otherwise → approve with context shown.
 pub fn cmd_lesson_guard(cwd: &str) {
-    use std::io::Read;
+    let parsed = read_stdin_value();
+    out(&lesson_guard_decision(cwd, &parsed));
+}
+
+fn lesson_guard_decision(cwd: &str, parsed: &serde_json::Value) -> serde_json::Value {
     use std::process::Command;
-
-    let mut input = String::new();
-    std::io::stdin().read_to_string(&mut input).ok();
-
-    let parsed: serde_json::Value =
-        serde_json::from_str(&input).unwrap_or(json!({}));
-
     let file_path = parsed
         .get("tool_input")
         .and_then(|ti| ti.get("file_path"))
@@ -155,22 +435,19 @@ pub fn cmd_lesson_guard(cwd: &str) {
         .unwrap_or("");
 
     if file_path.is_empty() {
-        out(&json!({"decision": "approve"}));
-        return;
+        return json!({"decision": "approve"});
     }
 
     // Build a query from the file path — extract meaningful path segments
     let query = build_recall_query(file_path);
     if query.is_empty() {
-        out(&json!({"decision": "approve"}));
-        return;
+        return json!({"decision": "approve"});
     }
 
     // Find hoangsa-memory binary
     let memory_root = Path::new(cwd).join(".hoangsa").join("memory");
     if !memory_root.exists() {
-        out(&json!({"decision": "approve"}));
-        return;
+        return json!({"decision": "approve"});
     }
 
     // Call hoangsa-memory CLI to recall lessons relevant to this file path
@@ -178,8 +455,7 @@ pub fn cmd_lesson_guard(cwd: &str) {
     let memory_bin = match memory_bin {
         Some(b) => b,
         None => {
-            out(&json!({"decision": "approve"}));
-            return;
+            return json!({"decision": "approve"});
         }
     };
 
@@ -191,24 +467,21 @@ pub fn cmd_lesson_guard(cwd: &str) {
     let output_bytes = match result {
         Ok(o) => o.stdout,
         Err(_) => {
-            out(&json!({"decision": "approve"}));
-            return;
+            return json!({"decision": "approve"});
         }
     };
 
     let recall: serde_json::Value = match serde_json::from_slice(&output_bytes) {
         Ok(v) => v,
         Err(_) => {
-            out(&json!({"decision": "approve"}));
-            return;
+            return json!({"decision": "approve"});
         }
     };
 
     let chunks = match recall.get("chunks").and_then(|c| c.as_array()) {
         Some(c) => c,
         None => {
-            out(&json!({"decision": "approve"}));
-            return;
+            return json!({"decision": "approve"});
         }
     };
 
@@ -223,8 +496,7 @@ pub fn cmd_lesson_guard(cwd: &str) {
         .collect();
 
     if lessons.is_empty() {
-        out(&json!({"decision": "approve"}));
-        return;
+        return json!({"decision": "approve"});
     }
 
     // Check: does any lesson say "NEVER" + contain a path fragment matching file_path?
@@ -242,17 +514,23 @@ pub fn cmd_lesson_guard(cwd: &str) {
         if let Some(never_pos) = lesson_lower.find("never") {
             let after_never = &lesson[never_pos..];
             // Take text up to next "—" or "Always" or end
-            let end_pos = after_never.find(" — ")
+            let end_pos = after_never
+                .find(" — ")
                 .or_else(|| after_never.find(". Always"))
                 .or_else(|| after_never.find(". The"))
                 .unwrap_or(after_never.len());
             let never_clause = &after_never[..end_pos];
 
             for word in never_clause.split_whitespace() {
-                let clean = word.trim_matches(|c: char| {
-                    !c.is_alphanumeric() && c != '/' && c != '.' && c != '-' && c != '_'
-                }).trim_matches('`');
-                if clean.contains('/') && clean.len() > 2 && fp_lower.contains(&clean.to_lowercase()) {
+                let clean = word
+                    .trim_matches(|c: char| {
+                        !c.is_alphanumeric() && c != '/' && c != '.' && c != '-' && c != '_'
+                    })
+                    .trim_matches('`');
+                if clean.contains('/')
+                    && clean.len() > 2
+                    && fp_lower.contains(&clean.to_lowercase())
+                {
                     blocking_lesson = Some(lesson);
                     break;
                 }
@@ -287,38 +565,38 @@ pub fn cmd_lesson_guard(cwd: &str) {
         let should_block = is_gitignored && is_installed_copy_path;
 
         if should_block {
-            out(&json!({
+            json!({
                 "decision": "block",
                 "reason": format!(
                     "BLOCKED: '{}' is a gitignored installed-copy path and matches a NEVER lesson.\n\nLesson:\n{}\n\nEdit the source under templates/ instead, then run bin/install to sync.\n\nIf this is intentional (rare), tell the user to override explicitly.",
                     file_path, lesson
                 )
-            }));
+            })
         } else {
             let gitignore_note = if is_gitignored {
                 "\nNote: This file is in .gitignore — it may be an installed copy, not the source."
             } else {
                 ""
             };
-            out(&json!({
+            json!({
                 "decision": "approve",
                 "reason": format!(
                     "⚠️ LESSON GUARD for '{}':{}\n\nRelevant lesson:\n{}\n\n---\nAll recalled lessons:\n{}\n\nIf this edit is intentional, proceed. If not, find the correct source file.",
                     file_path, gitignore_note, lesson, all_lessons_text
                 )
-            }));
+            })
         }
     } else if !lessons.is_empty() {
         // No blocking lesson, but surface lessons as context
-        out(&json!({
+        json!({
             "decision": "approve",
             "reason": format!(
                 "Lessons for '{}':\n{}",
                 file_path, all_lessons_text
             )
-        }));
+        })
     } else {
-        out(&json!({"decision": "approve"}));
+        json!({"decision": "approve"})
     }
 }
 
@@ -601,6 +879,10 @@ pub fn cmd_session_archive() {
 /// block the session. Rationale in
 /// `.hoangsa/sessions/brainstorm/post-install-onboarding/BRAINSTORM.md`.
 pub fn cmd_session_start(cwd: &str) {
+    out(&session_start_response(cwd));
+}
+
+fn session_start_response(cwd: &str) -> serde_json::Value {
     use crate::cmd::bootstrap;
     let project = std::path::Path::new(cwd);
     let reason = match bootstrap::should_bootstrap(project) {
@@ -628,7 +910,7 @@ pub fn cmd_session_start(cwd: &str) {
             "additionalContext": ctx,
         });
     }
-    out(&response);
+    response
 }
 
 /// Resolve the same memory root the MCP server uses.
@@ -700,15 +982,14 @@ fn count_incomplete_tasks(plan: &serde_json::Value) -> usize {
 ///
 /// Critical (block) rules fail-CLOSED. Quality (warn) rules fail-OPEN.
 pub fn cmd_enforce(cwd: &str) {
+    let parsed = read_stdin_value();
+    out(&enforce_decision(cwd, &parsed));
+}
+
+fn enforce_decision(cwd: &str, parsed: &serde_json::Value) -> serde_json::Value {
     use crate::cmd::rule::{
-        evaluate_rule_conditions, read_rules_config_pub, Enforcement, RuleAction,
+        Enforcement, RuleAction, evaluate_rule_conditions, read_rules_config_pub,
     };
-    use std::io::Read as _;
-
-    let mut input = String::new();
-    std::io::stdin().read_to_string(&mut input).ok();
-
-    let parsed: serde_json::Value = serde_json::from_str(&input).unwrap_or(json!({}));
     let tool_name = parsed
         .get("tool_name")
         .and_then(|v| v.as_str())
@@ -721,20 +1002,16 @@ pub fn cmd_enforce(cwd: &str) {
         Ok(None) => {
             // No rules.json — still run stateful checks
             if let Some(result) = stateful_check(cwd, tool_name, &tool_input) {
-                print_decision(&result);
-                return;
+                return decision_value(&result);
             }
-            out(&json!({"decision": "approve"}));
-            return;
+            return json!({"decision": "approve"});
         }
         Err(_) => {
             // Parse error — fail-OPEN for quality, but stateful checks still run
             if let Some(result) = stateful_check(cwd, tool_name, &tool_input) {
-                print_decision(&result);
-                return;
+                return decision_value(&result);
             }
-            out(&json!({"decision": "approve"}));
-            return;
+            return json!({"decision": "approve"});
         }
     };
 
@@ -769,8 +1046,7 @@ pub fn cmd_enforce(cwd: &str) {
                     "⛔ RULE VIOLATION: {}\n\nRule: {}\nAction: BLOCK\n\n{}",
                     rule.id, rule.name, rule.message
                 );
-                out(&json!({"decision": "block", "reason": reason}));
-                return;
+                return json!({"decision": "block", "reason": reason});
             }
             RuleAction::Warn => {
                 warnings.push(format!("⚠️ {}: {}", rule.id, rule.message));
@@ -785,10 +1061,13 @@ pub fn cmd_enforce(cwd: &str) {
                 // Append any pattern warnings to the reason
                 let mut reason = result.reason;
                 if !warnings.is_empty() {
-                    reason = format!("{}\n\n---\nAdditional warnings:\n{}", reason, warnings.join("\n"));
+                    reason = format!(
+                        "{}\n\n---\nAdditional warnings:\n{}",
+                        reason,
+                        warnings.join("\n")
+                    );
                 }
-                out(&json!({"decision": "block", "reason": reason}));
-                return;
+                return json!({"decision": "block", "reason": reason});
             }
             _ => {
                 // Stateful check passed but may have added warnings
@@ -801,10 +1080,10 @@ pub fn cmd_enforce(cwd: &str) {
 
     // ── Output final decision ──
     if warnings.is_empty() {
-        out(&json!({"decision": "approve"}));
+        json!({"decision": "approve"})
     } else {
         let reason = warnings.join("\n\n");
-        out(&json!({"decision": "approve", "reason": reason}));
+        json!({"decision": "approve", "reason": reason})
     }
 }
 
@@ -814,19 +1093,23 @@ struct EnforceResult {
     warning: Option<String>,
 }
 
-fn print_decision(result: &EnforceResult) {
+fn decision_value(result: &EnforceResult) -> serde_json::Value {
     if result.decision == "block" {
-        out(&json!({"decision": "block", "reason": result.reason}));
+        json!({"decision": "block", "reason": result.reason})
     } else if let Some(w) = &result.warning {
-        out(&json!({"decision": "approve", "reason": w}));
+        json!({"decision": "approve", "reason": w})
     } else {
-        out(&json!({"decision": "approve"}));
+        json!({"decision": "approve"})
     }
 }
 
 /// Stateful enforcement checks based on event log.
 /// Returns None if no stateful rule applies to this tool call.
-fn stateful_check(cwd: &str, tool_name: &str, tool_input: &serde_json::Value) -> Option<EnforceResult> {
+fn stateful_check(
+    cwd: &str,
+    tool_name: &str,
+    tool_input: &serde_json::Value,
+) -> Option<EnforceResult> {
     match tool_name {
         "Edit" | "Write" => {
             if stateful_rule_enabled(cwd, "require-memory-impact") {
@@ -884,8 +1167,16 @@ fn stateful_check_edit(cwd: &str, tool_input: &serde_json::Value) -> Option<Enfo
     let events = fs::read_to_string(enforcement_events_path(cwd)).unwrap_or_default();
     match intent_guard_edit(&events, file_path) {
         IntentOutcome::Approve => None,
-        IntentOutcome::Block(reason) => Some(EnforceResult { decision: "block".to_string(), reason, warning: None }),
-        IntentOutcome::Warn(w) => Some(EnforceResult { decision: "approve".to_string(), reason: String::new(), warning: Some(w) }),
+        IntentOutcome::Block(reason) => Some(EnforceResult {
+            decision: "block".to_string(),
+            reason,
+            warning: None,
+        }),
+        IntentOutcome::Warn(w) => Some(EnforceResult {
+            decision: "approve".to_string(),
+            reason: String::new(),
+            warning: Some(w),
+        }),
     }
 }
 
@@ -900,8 +1191,16 @@ fn stateful_check_bash(cwd: &str, tool_input: &serde_json::Value) -> Option<Enfo
     let diff_files = get_staged_files(cwd);
     match intent_guard_bash_commit(&events, &diff_files) {
         IntentOutcome::Approve => None,
-        IntentOutcome::Block(reason) => Some(EnforceResult { decision: "block".to_string(), reason, warning: None }),
-        IntentOutcome::Warn(w) => Some(EnforceResult { decision: "approve".to_string(), reason: String::new(), warning: Some(w) }),
+        IntentOutcome::Block(reason) => Some(EnforceResult {
+            decision: "block".to_string(),
+            reason,
+            warning: None,
+        }),
+        IntentOutcome::Warn(w) => Some(EnforceResult {
+            decision: "approve".to_string(),
+            reason: String::new(),
+            warning: Some(w),
+        }),
     }
 }
 
@@ -915,7 +1214,11 @@ fn check_gitignore_add(cwd: &str, tool_input: &serde_json::Value) -> Option<Enfo
     let command = tool_input.get("command").and_then(|v| v.as_str())?;
     let files = parse_git_add_files(command)?;
     let reason = gitignore_block_reason(&files, |f| is_path_gitignored(cwd, f))?;
-    Some(EnforceResult { decision: "block".to_string(), reason, warning: None })
+    Some(EnforceResult {
+        decision: "block".to_string(),
+        reason,
+        warning: None,
+    })
 }
 
 /// Pure: extract non-flag file args from a `git add ...` command.
@@ -951,11 +1254,7 @@ fn parse_git_add_files(command: &str) -> Option<Vec<String>> {
         }
         files.push(tok.to_string());
     }
-    if files.is_empty() {
-        None
-    } else {
-        Some(files)
-    }
+    if files.is_empty() { None } else { Some(files) }
 }
 
 /// Pure: given a list of file args and an `is_ignored` predicate, return the
@@ -965,7 +1264,11 @@ fn gitignore_block_reason<F: Fn(&str) -> bool>(files: &[String], is_ignored: F) 
     if ignored.is_empty() {
         return None;
     }
-    let list = ignored.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", ");
+    let list = ignored
+        .iter()
+        .map(|s| s.as_str())
+        .collect::<Vec<_>>()
+        .join(", ");
     Some(format!(
         "⛔ RULE VIOLATION: no-git-add-ignored\n\nRule: Block git add of gitignored files\nAction: BLOCK\n\ngit add contains gitignored files: {list}. Remove them from the command or update .gitignore."
     ))
@@ -1058,7 +1361,9 @@ pub fn intent_guard_bash_commit(events: &str, staged_files: &[String]) -> Intent
                     }
                 }
             }
-            "override" if entry.get("rule").and_then(|r| r.as_str()) == Some("require-detect-changes") => {
+            "override"
+                if entry.get("rule").and_then(|r| r.as_str()) == Some("require-detect-changes") =>
+            {
                 has_override = true;
             }
             _ => {}
@@ -1126,7 +1431,8 @@ fn get_staged_files(cwd: &str) -> Vec<String> {
 }
 
 fn is_git_commit(command: &str) -> bool {
-    let re = regex::Regex::new(r"git\s+commit").unwrap_or_else(|_| regex::Regex::new("$^").expect("infallible"));
+    let re = regex::Regex::new(r"git\s+commit")
+        .unwrap_or_else(|_| regex::Regex::new("$^").expect("infallible"));
     re.is_match(command)
 }
 
@@ -1159,8 +1465,8 @@ fn paths_refer_to_same_file(a: &str, b: &str) -> bool {
 
 fn is_source_file(path: &str) -> bool {
     let source_extensions = [
-        ".rs", ".ts", ".tsx", ".js", ".jsx", ".py", ".go", ".java",
-        ".c", ".cpp", ".h", ".hpp", ".rb", ".swift", ".kt",
+        ".rs", ".ts", ".tsx", ".js", ".jsx", ".py", ".go", ".java", ".c", ".cpp", ".h", ".hpp",
+        ".rb", ".swift", ".kt",
     ];
     source_extensions.iter().any(|ext| path.ends_with(ext))
 }
@@ -1173,25 +1479,22 @@ fn is_source_file(path: &str) -> bool {
 /// Records: impact (with file resolution), detect_changes (with files), recall (with query).
 /// Always outputs `{"decision":"approve"}` — never blocks.
 pub fn cmd_post_enforce(cwd: &str) {
-    use std::io::Read as _;
+    let parsed = read_stdin_value();
+    out(&post_enforce_decision(cwd, &parsed));
+}
 
-    let mut input = String::new();
-    std::io::stdin().read_to_string(&mut input).ok();
-
-    let parsed: serde_json::Value = match serde_json::from_str(&input) {
-        Ok(v) => v,
-        Err(_) => {
-            out(&json!({"decision": "approve"}));
-            return;
-        }
-    };
-
-    let tool_name = parsed.get("tool_name").and_then(|v| v.as_str()).unwrap_or("");
+fn post_enforce_decision(cwd: &str, parsed: &serde_json::Value) -> serde_json::Value {
+    let tool_name = parsed
+        .get("tool_name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
     let tool_input = parsed.get("tool_input").cloned().unwrap_or(json!({}));
 
     let event = match tool_name {
         "mcp__hoangsa-memory__memory_impact" => build_impact_event(cwd, &tool_input),
-        "mcp__hoangsa-memory__memory_detect_changes" => build_detect_changes_event(&tool_input, &parsed),
+        "mcp__hoangsa-memory__memory_detect_changes" => {
+            build_detect_changes_event(&tool_input, &parsed)
+        }
         "mcp__hoangsa-memory__memory_recall" => build_recall_event(&tool_input),
         "Edit" | "Write" | "MultiEdit" => build_drift_event(cwd, &tool_input),
         _ => None,
@@ -1201,7 +1504,7 @@ pub fn cmd_post_enforce(cwd: &str) {
         append_event(cwd, &event);
     }
 
-    out(&json!({"decision": "approve"}));
+    json!({"decision": "approve"})
 }
 
 /// Rule #14 (experimental, v1): grep-based post-edit drift detection.
@@ -1214,14 +1517,25 @@ fn build_drift_event(cwd: &str, tool_input: &serde_json::Value) -> Option<serde_
     if !is_source_file(file_path) {
         return None;
     }
-    let old_string = tool_input.get("old_string").and_then(|v| v.as_str()).unwrap_or("");
-    let new_string = tool_input.get("new_string").and_then(|v| v.as_str()).unwrap_or("");
-    let content = tool_input.get("content").and_then(|v| v.as_str()).unwrap_or("");
+    let old_string = tool_input
+        .get("old_string")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let new_string = tool_input
+        .get("new_string")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let content = tool_input
+        .get("content")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
 
     // Collect symbols from the edit region (old ∪ new for Edit; content for Write).
     let mut edited: Vec<String> = Vec::new();
     for text in [old_string, new_string, content] {
-        if text.is_empty() { continue; }
+        if text.is_empty() {
+            continue;
+        }
         extract_symbols(cwd, text, &mut edited);
     }
     edited.sort();
@@ -1263,7 +1577,11 @@ fn build_drift_event(cwd: &str, tool_input: &serde_json::Value) -> Option<serde_
 
     let uncovered: Vec<String> = edited
         .iter()
-        .filter(|e| !impacted.iter().any(|i| i.contains(e.as_str()) || e.contains(i.as_str())))
+        .filter(|e| {
+            !impacted
+                .iter()
+                .any(|i| i.contains(e.as_str()) || e.contains(i.as_str()))
+        })
         .cloned()
         .collect();
 
@@ -1300,7 +1618,10 @@ const DEFAULT_SYMBOL_PATTERNS: &[&str] = &[
 fn read_symbol_patterns(cwd: &str) -> Vec<String> {
     let config_path = Path::new(cwd).join(".hoangsa").join("config.json");
     if !config_path.exists() {
-        return DEFAULT_SYMBOL_PATTERNS.iter().map(|s| s.to_string()).collect();
+        return DEFAULT_SYMBOL_PATTERNS
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
     }
     let config = read_json(config_path.to_str().unwrap_or(""));
     let configured = config
@@ -1314,7 +1635,10 @@ fn read_symbol_patterns(cwd: &str) -> Vec<String> {
         });
     match configured {
         Some(patterns) if !patterns.is_empty() => patterns,
-        _ => DEFAULT_SYMBOL_PATTERNS.iter().map(|s| s.to_string()).collect(),
+        _ => DEFAULT_SYMBOL_PATTERNS
+            .iter()
+            .map(|s| s.to_string())
+            .collect(),
     }
 }
 
@@ -1335,7 +1659,9 @@ fn extract_symbols(cwd: &str, text: &str, out: &mut Vec<String>) {
 }
 
 fn build_impact_event(cwd: &str, tool_input: &serde_json::Value) -> Option<serde_json::Value> {
-    let fqn = tool_input.get("fqn").and_then(|v| v.as_str())
+    let fqn = tool_input
+        .get("fqn")
+        .and_then(|v| v.as_str())
         .or_else(|| tool_input.get("target").and_then(|v| v.as_str()))
         .unwrap_or("");
     if fqn.is_empty() {
@@ -1356,7 +1682,10 @@ fn build_impact_event(cwd: &str, tool_input: &serde_json::Value) -> Option<serde
     }))
 }
 
-fn build_detect_changes_event(tool_input: &serde_json::Value, full_payload: &serde_json::Value) -> Option<serde_json::Value> {
+fn build_detect_changes_event(
+    tool_input: &serde_json::Value,
+    full_payload: &serde_json::Value,
+) -> Option<serde_json::Value> {
     // Try to extract files from tool_result (the actual output of detect_changes)
     let mut files: Vec<String> = Vec::new();
 
@@ -1366,29 +1695,37 @@ fn build_detect_changes_event(tool_input: &serde_json::Value, full_payload: &ser
             if let Some(path) = line.strip_prefix("+++ b/") {
                 files.push(path.to_string());
             } else if let Some(path) = line.strip_prefix("--- a/")
-                && path != "/dev/null" {
-                    files.push(path.to_string());
-                }
+                && path != "/dev/null"
+            {
+                files.push(path.to_string());
+            }
         }
     }
 
     // Also check tool_result for file mentions
     if files.is_empty()
-        && let Some(result) = full_payload.get("tool_result").and_then(|v| v.as_str()) {
-            // Parse result looking for file paths
-            for line in result.lines() {
-                let trimmed = line.trim();
-                if trimmed.contains('/') && (trimmed.ends_with(".rs") || trimmed.ends_with(".ts") || trimmed.ends_with(".py")) {
-                    // Rough extraction of paths
-                    for word in trimmed.split_whitespace() {
-                        let clean = word.trim_matches(|c: char| !c.is_alphanumeric() && c != '/' && c != '.' && c != '-' && c != '_');
-                        if clean.contains('/') && clean.len() > 3 {
-                            files.push(clean.to_string());
-                        }
+        && let Some(result) = full_payload.get("tool_result").and_then(|v| v.as_str())
+    {
+        // Parse result looking for file paths
+        for line in result.lines() {
+            let trimmed = line.trim();
+            if trimmed.contains('/')
+                && (trimmed.ends_with(".rs")
+                    || trimmed.ends_with(".ts")
+                    || trimmed.ends_with(".py"))
+            {
+                // Rough extraction of paths
+                for word in trimmed.split_whitespace() {
+                    let clean = word.trim_matches(|c: char| {
+                        !c.is_alphanumeric() && c != '/' && c != '.' && c != '-' && c != '_'
+                    });
+                    if clean.contains('/') && clean.len() > 3 {
+                        files.push(clean.to_string());
                     }
                 }
             }
         }
+    }
 
     files.sort();
     files.dedup();
@@ -1400,7 +1737,10 @@ fn build_detect_changes_event(tool_input: &serde_json::Value, full_payload: &ser
 }
 
 fn build_recall_event(tool_input: &serde_json::Value) -> Option<serde_json::Value> {
-    let query = tool_input.get("query").and_then(|v| v.as_str()).unwrap_or("");
+    let query = tool_input
+        .get("query")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
     if query.is_empty() {
         return None;
     }
@@ -1432,14 +1772,19 @@ fn resolve_symbol_to_file(cwd: &str, symbol: &str) -> Option<String> {
                 .args(["context", bare, "--json"])
                 .current_dir(cwd)
                 .output()
-                && let Ok(v) = serde_json::from_slice::<serde_json::Value>(&out.stdout) {
-                    if let Some(path) = v.get("symbol").and_then(|s| s.get("path")).and_then(|p| p.as_str()) {
-                        return Some(path.to_string());
-                    }
-                    if let Some(path) = v.get("path").and_then(|p| p.as_str()) {
-                        return Some(path.to_string());
-                    }
-                }
+            && let Ok(v) = serde_json::from_slice::<serde_json::Value>(&out.stdout)
+        {
+            if let Some(path) = v
+                .get("symbol")
+                .and_then(|s| s.get("path"))
+                .and_then(|p| p.as_str())
+            {
+                return Some(path.to_string());
+            }
+            if let Some(path) = v.get("path").and_then(|p| p.as_str()) {
+                return Some(path.to_string());
+            }
+        }
     }
 
     // Fallback: in-process regex walk using the configured symbol patterns.
@@ -1471,12 +1816,21 @@ fn find_symbol_in_tree(
         return None;
     }
     const SKIP_DIRS: &[&str] = &[
-        ".git", "node_modules", "target", "dist", "build", ".hoangsa",
-        ".claude", "__pycache__", ".venv", "venv", ".next",
+        ".git",
+        "node_modules",
+        "target",
+        "dist",
+        "build",
+        ".hoangsa",
+        ".claude",
+        "__pycache__",
+        ".venv",
+        "venv",
+        ".next",
     ];
     const SOURCE_EXTS: &[&str] = &[
-        "rs", "ts", "tsx", "js", "jsx", "py", "go", "java", "c", "cpp",
-        "h", "hpp", "rb", "swift", "kt", "scala", "cs", "php", "lua", "ex",
+        "rs", "ts", "tsx", "js", "jsx", "py", "go", "java", "c", "cpp", "h", "hpp", "rb", "swift",
+        "kt", "scala", "cs", "php", "lua", "ex",
     ];
 
     let entries = fs::read_dir(dir).ok()?;
@@ -1486,7 +1840,10 @@ fn find_symbol_in_tree(
         if name.starts_with('.') && depth == 0 {
             continue;
         }
-        let ft = match entry.file_type() { Ok(t) => t, Err(_) => continue };
+        let ft = match entry.file_type() {
+            Ok(t) => t,
+            Err(_) => continue,
+        };
         if ft.is_dir() {
             if SKIP_DIRS.contains(&name.as_str()) {
                 continue;
@@ -1536,7 +1893,9 @@ fn append_event(cwd: &str, event: &serde_json::Value) {
     let mut enriched = event.clone();
     if enriched.get("ts").is_none() {
         let ts = chrono_now();
-        enriched.as_object_mut().map(|o| o.insert("ts".to_string(), json!(ts)));
+        enriched
+            .as_object_mut()
+            .map(|o| o.insert("ts".to_string(), json!(ts)));
     }
 
     let mut line = serde_json::to_string(&enriched).unwrap_or_default();
@@ -1564,11 +1923,15 @@ pub fn cmd_enforce_override(cwd: &str, args: &[&str]) {
     let reason = flag_value(args, "--reason").unwrap_or("");
 
     if rule.is_empty() || target.is_empty() {
-        out(&json!({"success": false, "error": "Required: --rule <id> --target <path> --reason <text>"}));
+        out(
+            &json!({"success": false, "error": "Required: --rule <id> --target <path> --reason <text>"}),
+        );
         return;
     }
     if reason.is_empty() {
-        out(&json!({"success": false, "error": "--reason is required (explains why override is safe)"}));
+        out(
+            &json!({"success": false, "error": "--reason is required (explains why override is safe)"}),
+        );
         return;
     }
 
@@ -1608,27 +1971,63 @@ pub fn cmd_enforce_report(cwd: &str) {
             let event_type = entry.get("event").and_then(|e| e.as_str()).unwrap_or("");
             match event_type {
                 "block" => {
-                    let rule = entry.get("rule").and_then(|r| r.as_str()).unwrap_or("?").to_string();
-                    let target = entry.get("target").and_then(|t| t.as_str()).unwrap_or("?").to_string();
+                    let rule = entry
+                        .get("rule")
+                        .and_then(|r| r.as_str())
+                        .unwrap_or("?")
+                        .to_string();
+                    let target = entry
+                        .get("target")
+                        .and_then(|t| t.as_str())
+                        .unwrap_or("?")
+                        .to_string();
                     blocks.push((rule, target));
                 }
                 "warn" => {
-                    let rule = entry.get("rule").and_then(|r| r.as_str()).unwrap_or("?").to_string();
-                    let target = entry.get("target").and_then(|t| t.as_str()).unwrap_or("?").to_string();
+                    let rule = entry
+                        .get("rule")
+                        .and_then(|r| r.as_str())
+                        .unwrap_or("?")
+                        .to_string();
+                    let target = entry
+                        .get("target")
+                        .and_then(|t| t.as_str())
+                        .unwrap_or("?")
+                        .to_string();
                     warns.push((rule, target));
                 }
                 "override" => {
-                    let rule = entry.get("rule").and_then(|r| r.as_str()).unwrap_or("?").to_string();
-                    let target = entry.get("target").and_then(|t| t.as_str()).unwrap_or("?").to_string();
-                    let reason = entry.get("reason").and_then(|r| r.as_str()).unwrap_or("").to_string();
+                    let rule = entry
+                        .get("rule")
+                        .and_then(|r| r.as_str())
+                        .unwrap_or("?")
+                        .to_string();
+                    let target = entry
+                        .get("target")
+                        .and_then(|t| t.as_str())
+                        .unwrap_or("?")
+                        .to_string();
+                    let reason = entry
+                        .get("reason")
+                        .and_then(|r| r.as_str())
+                        .unwrap_or("")
+                        .to_string();
                     overrides.push((rule, target, reason));
                 }
                 "drift_warn" => {
-                    let file = entry.get("file").and_then(|f| f.as_str()).unwrap_or("?").to_string();
+                    let file = entry
+                        .get("file")
+                        .and_then(|f| f.as_str())
+                        .unwrap_or("?")
+                        .to_string();
                     let uncovered: Vec<String> = entry
                         .get("uncovered")
                         .and_then(|v| v.as_array())
-                        .map(|arr| arr.iter().filter_map(|s| s.as_str().map(|s| s.to_string())).collect())
+                        .map(|arr| {
+                            arr.iter()
+                                .filter_map(|s| s.as_str().map(|s| s.to_string()))
+                                .collect()
+                        })
                         .unwrap_or_default();
                     drifts.push((file, uncovered));
                 }
@@ -1706,7 +2105,9 @@ pub fn cmd_state_record(cwd: &str) {
 
     if event.get("ts").is_none() {
         let ts = chrono_now();
-        event.as_object_mut().map(|o| o.insert("ts".to_string(), json!(ts)));
+        event
+            .as_object_mut()
+            .map(|o| o.insert("ts".to_string(), json!(ts)));
     }
 
     let events_path = enforcement_events_path(cwd);
@@ -1789,16 +2190,17 @@ pub fn cmd_state_check(cwd: &str, args: &[&str]) {
 /// enforcement events file, and on `source == "clear"` snapshots the
 /// statusline cost baseline so the displayed cost resets to $0.00.
 pub fn cmd_state_clear(cwd: &str) {
-    let events_path = enforcement_events_path(cwd);
-    let _ = fs::remove_file(&events_path);
-    let _ = fs::remove_file(reflect_sentinel_path(cwd));
+    clear_enforcement_state(cwd);
 
     // Best-effort: read SessionStart payload (if any) and handle /clear.
     let mut raw = String::new();
     let _ = std::io::Read::read_to_string(&mut std::io::stdin(), &mut raw);
     if let Ok(payload) = serde_json::from_str::<serde_json::Value>(&raw) {
         let source = payload.get("source").and_then(|v| v.as_str()).unwrap_or("");
-        let sid = payload.get("session_id").and_then(|v| v.as_str()).unwrap_or("");
+        let sid = payload
+            .get("session_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
         if source == "clear" && !sid.is_empty() {
             snapshot_statusline_baseline(sid);
         }
@@ -1807,16 +2209,26 @@ pub fn cmd_state_clear(cwd: &str) {
     out(&json!({"success": true}));
 }
 
+fn clear_enforcement_state(cwd: &str) {
+    let events_path = enforcement_events_path(cwd);
+    let _ = fs::remove_file(&events_path);
+    let _ = fs::remove_file(reflect_sentinel_path(cwd));
+}
+
 /// On `/clear`, promote the last-seen cost into the baseline so the
 /// statusline displays `max(0, total - baseline) = 0` until the new
 /// conversation accrues cost. Rewrites the stored session_id from the
 /// payload so the next statusline tick (which may carry a fresh sid
 /// from CC) still treats the baseline as current.
 fn snapshot_statusline_baseline(session_id: &str) {
-    let Some(home) = std::env::var_os("HOME").map(std::path::PathBuf::from) else { return };
+    let Some(home) = std::env::var_os("HOME").map(std::path::PathBuf::from) else {
+        return;
+    };
     let run_dir = home.join(".hoangsa").join("run");
     let path = crate::cmd::statusline::cost_state_path(&run_dir);
-    let Some(mut state) = crate::cmd::statusline::read_cost_state(&path) else { return };
+    let Some(mut state) = crate::cmd::statusline::read_cost_state(&path) else {
+        return;
+    };
     state.baseline = state.last_seen;
     state.session_id = session_id.to_string();
     crate::cmd::statusline::write_cost_state(&path, &state);
@@ -2032,12 +2444,67 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    #[test]
+    fn normalize_codex_apply_patch_maps_to_edit_write() {
+        let event = normalize_hook_event(
+            HookPlatform::Codex,
+            HookEventKind::PreToolUse,
+            "/repo",
+            json!({
+                "tool_name": "apply_patch",
+                "input": { "path": "src/lib.rs" },
+                "cwd": "/repo"
+            }),
+        );
+
+        assert_eq!(event.category, HookToolCategory::EditWrite);
+        assert_eq!(event.file_path, Some(PathBuf::from("src/lib.rs")));
+        let payload = normalized_to_claude_payload(&event);
+        assert_eq!(payload["tool_name"], "Write");
+        assert_eq!(payload["tool_input"]["file_path"], "src/lib.rs");
+    }
+
+    #[test]
+    fn normalize_codex_bash_extracts_command() {
+        let event = normalize_hook_event(
+            HookPlatform::Codex,
+            HookEventKind::PreToolUse,
+            "/repo",
+            json!({
+                "tool": { "name": "shell" },
+                "arguments": { "command": "git status --short" }
+            }),
+        );
+
+        assert_eq!(event.category, HookToolCategory::Bash);
+        assert_eq!(event.command.as_deref(), Some("git status --short"));
+        let payload = normalized_to_claude_payload(&event);
+        assert_eq!(payload["tool_name"], "Bash");
+        assert_eq!(payload["tool_input"]["command"], "git status --short");
+    }
+
+    #[test]
+    fn normalize_codex_missing_transcript_is_optional() {
+        let event = normalize_hook_event(
+            HookPlatform::Codex,
+            HookEventKind::PreCompact,
+            "/repo",
+            json!({ "cwd": "/repo" }),
+        );
+
+        assert_eq!(event.transcript_path, None);
+        assert_eq!(event.cwd, PathBuf::from("/repo"));
+    }
+
     // ── intent_guard_edit ────────────────────────────────────────────────────
 
     #[test]
     fn test_intent_guard_edit_empty_log_blocks() {
         let result = intent_guard_edit("", "/abs/path/foo.rs");
-        assert!(matches!(result, IntentOutcome::Block(_)), "empty events must block");
+        assert!(
+            matches!(result, IntentOutcome::Block(_)),
+            "empty events must block"
+        );
     }
 
     #[test]
@@ -2045,7 +2512,11 @@ mod tests {
         let events = r#"{"event":"impact","file":"cli/src/cmd/foo.rs","symbol":"foo::bar"}
 "#;
         let result = intent_guard_edit(events, "/Users/me/proj/cli/src/cmd/foo.rs");
-        assert_eq!(result, IntentOutcome::Approve, "abs↔rel path match should approve");
+        assert_eq!(
+            result,
+            IntentOutcome::Approve,
+            "abs↔rel path match should approve"
+        );
     }
 
     #[test]
@@ -2161,7 +2632,10 @@ mod tests {
     fn test_build_recall_query_absolute_non_home_path() {
         // path that is definitely not under HOME: /tmp/file.rs
         let q = build_recall_query("/tmp/file.rs");
-        assert!(q.contains("tmp/file.rs"), "expected path segment in query, got: {q}");
+        assert!(
+            q.contains("tmp/file.rs"),
+            "expected path segment in query, got: {q}"
+        );
         assert!(q.starts_with("NEVER edit"));
     }
 
@@ -2302,8 +2776,7 @@ mod tests {
         let cwd = tmp.path().to_str().unwrap();
         seed_events_file(tmp.path());
 
-        let outcome =
-            evaluate_reflect_prompt(cwd, r#"{"stop_hook_active":true}"#);
+        let outcome = evaluate_reflect_prompt(cwd, r#"{"stop_hook_active":true}"#);
         assert!(matches!(outcome, ReflectOutcome::Skip));
         // Must NOT write the sentinel — avoids suppressing the next session.
         assert!(!reflect_sentinel_path(cwd).exists());
@@ -2512,7 +2985,11 @@ mod tests {
     fn parse_git_add_files_multiple() {
         assert_eq!(
             parse_git_add_files("git add foo.log bar.txt baz/qux.rs").unwrap(),
-            vec!["foo.log".to_string(), "bar.txt".to_string(), "baz/qux.rs".to_string()]
+            vec![
+                "foo.log".to_string(),
+                "bar.txt".to_string(),
+                "baz/qux.rs".to_string()
+            ]
         );
     }
 
@@ -2572,9 +3049,18 @@ mod tests {
     fn gitignore_block_reason_blocks_on_any_ignored() {
         let files = vec!["a.rs".to_string(), "foo.log".to_string()];
         let reason = gitignore_block_reason(&files, |f| f.ends_with(".log")).expect("should block");
-        assert!(reason.contains("foo.log"), "reason should name the ignored file");
-        assert!(!reason.contains("a.rs"), "reason should not name clean files");
-        assert!(reason.contains("no-git-add-ignored"), "reason should cite the rule id");
+        assert!(
+            reason.contains("foo.log"),
+            "reason should name the ignored file"
+        );
+        assert!(
+            !reason.contains("a.rs"),
+            "reason should not name clean files"
+        );
+        assert!(
+            reason.contains("no-git-add-ignored"),
+            "reason should cite the rule id"
+        );
     }
 
     #[test]

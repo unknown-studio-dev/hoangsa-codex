@@ -195,6 +195,11 @@ fn main() {
         ("hook", "statusline") => {
             cmd::statusline::cmd_statusline();
         }
+        ("hook", "codex") | ("hook", "claude") => {
+            let event = rest.first().copied().unwrap_or("");
+            let handler = rest.get(1).copied();
+            cmd::hook::cmd_platform_hook(sub, event, handler, &cwd);
+        }
         ("enforce", "override") => {
             cmd::hook::cmd_enforce_override(&cwd, &rest);
         }

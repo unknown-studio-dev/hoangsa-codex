@@ -57,9 +57,7 @@ fn parse_stdout(out: &Output) -> Value {
     let stdout = String::from_utf8_lossy(&out.stdout);
     serde_json::from_str(&stdout).unwrap_or_else(|e| {
         let stderr = String::from_utf8_lossy(&out.stderr);
-        panic!(
-            "stdout must be valid JSON (parse error: {e})\nstdout: {stdout}\nstderr: {stderr}"
-        )
+        panic!("stdout must be valid JSON (parse error: {e})\nstdout: {stdout}\nstderr: {stderr}")
     })
 }
 
@@ -120,7 +118,10 @@ fn dry_run_global_emits_mode_global() {
     let out = run(install_cmd(home.path(), cwd.path()).args(["--global", "--dry-run"]));
     let v = expect_success_json(&out, "dry-run global");
     assert_eq!(v["mode"], "global", "expected mode=global; got: {v}");
-    assert!(v["actions"].is_array(), "actions must be an array; got: {v}");
+    assert!(
+        v["actions"].is_array(),
+        "actions must be an array; got: {v}"
+    );
 }
 
 // ─── 2. dry-run local mode ───────────────────────────────────────────────
@@ -257,8 +258,11 @@ fn mcp_merge_preserves_existing_global() {
             "other": { "command": "/usr/local/bin/other-mcp", "args": [] }
         }
     });
-    fs::write(&claude_json, serde_json::to_string_pretty(&seed).expect("encode"))
-        .expect("write seed claude.json");
+    fs::write(
+        &claude_json,
+        serde_json::to_string_pretty(&seed).expect("encode"),
+    )
+    .expect("write seed claude.json");
 
     // Live install: --global --no-memory so we skip bin relocation entirely.
     let out = run(install_cmd(home.path(), cwd.path())
@@ -424,7 +428,10 @@ fn task_manager_flag_accepted_space_and_equals() {
         "space form must record clickup; got: {v_space}"
     );
 
-    let v_eq = assert_accepted("equals", &["--global", "--dry-run", "--task-manager=clickup"]);
+    let v_eq = assert_accepted(
+        "equals",
+        &["--global", "--dry-run", "--task-manager=clickup"],
+    );
     assert_eq!(
         v_eq["flags"]["task_manager"], "clickup",
         "equals form must record clickup; got: {v_eq}"
@@ -515,6 +522,98 @@ fn no_memory_flag_skips_relocate() {
         v["flags"]["no_memory"], true,
         "--no-memory flag must round-trip to the preview; got: {v}"
     );
+}
+
+#[test]
+fn dry_run_target_codex_local_plans_codex_hooks_only() {
+    let (home, cwd) = tmp_home_cwd();
+
+    let out = run(install_cmd(home.path(), cwd.path()).args([
+        "--target",
+        "codex",
+        "--local",
+        "--dry-run",
+        "--no-memory",
+    ]));
+    let v = expect_success_json(&out, "dry-run codex local");
+    let actions = v["actions"].as_array().expect("actions array");
+    assert!(
+        actions.iter().any(|a| {
+            a.get("action").and_then(|s| s.as_str()) == Some("merge_codex_hooks")
+                && a.get("path")
+                    .and_then(|p| p.as_str())
+                    .is_some_and(|p| p.ends_with(".codex/hooks.json"))
+        }),
+        "codex dry-run must plan .codex/hooks.json merge; got: {v}"
+    );
+    assert!(
+        !actions.iter().any(|a| {
+            matches!(
+                a.get("action").and_then(|s| s.as_str()),
+                Some("merge_settings" | "register_mcp_local")
+            )
+        }),
+        "codex target must not plan Claude settings or local Claude MCP actions; got: {v}"
+    );
+    assert_eq!(v["flags"]["target"], "codex");
+}
+
+#[test]
+fn live_target_codex_preserves_user_hooks_and_skips_claude_settings() {
+    let (home, cwd) = tmp_home_cwd();
+    let hooks_path = cwd.path().join(".codex").join("hooks.json");
+    fs::create_dir_all(hooks_path.parent().unwrap()).expect("mkdir .codex");
+    fs::write(
+        &hooks_path,
+        serde_json::to_string_pretty(&serde_json::json!({
+            "description": "user hooks",
+            "hooks": {
+                "PreToolUse": [{
+                    "matcher": "Bash",
+                    "hooks": [{ "type": "command", "command": "/usr/local/bin/user-hook" }]
+                }]
+            }
+        }))
+        .unwrap(),
+    )
+    .expect("seed codex hooks");
+
+    for run_idx in 0..2 {
+        let out = run(install_cmd(home.path(), cwd.path()).args([
+            "--target",
+            "codex",
+            "--local",
+            "--no-memory",
+        ]));
+        assert!(
+            out.status.success(),
+            "codex install run {run_idx} must succeed; stderr: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
+    assert!(
+        !cwd.path().join(".claude/settings.json").exists(),
+        "codex target must not write Claude settings.json"
+    );
+    let raw = fs::read_to_string(&hooks_path).expect("read codex hooks");
+    let back: Value = serde_json::from_str(&raw).expect("parse codex hooks");
+    assert_eq!(back["description"], "user hooks");
+    let pre = back["hooks"]["PreToolUse"]
+        .as_array()
+        .expect("PreToolUse array");
+    assert_eq!(pre.len(), 3, "user hook plus two Hoangsa PreToolUse hooks");
+    assert!(pre.iter().any(|entry| {
+        entry["hooks"][0]["command"].as_str() == Some("/usr/local/bin/user-hook")
+    }));
+    let total: usize = back["hooks"]
+        .as_object()
+        .expect("hooks object")
+        .values()
+        .filter_map(|v| v.as_array())
+        .map(|v| v.len())
+        .sum();
+    assert_eq!(total, 7, "rerun must not duplicate Hoangsa hooks");
 }
 
 // ─── 13. memory-guidance sync runs during --local install ─────────────────
