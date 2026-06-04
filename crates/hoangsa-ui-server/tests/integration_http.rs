@@ -120,6 +120,14 @@ async fn full_round_trip() {
         .unwrap();
     assert_eq!(diff["after"]["preferences"]["lang"], "en");
 
+    let unknown_layer = client
+        .post(format!("{base}/api/config/diff?t={token}"))
+        .json(&json!({"layer":"other","patch":patch}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(unknown_layer.status(), 400);
+
     let apply: Value = client
         .post(format!("{base}/api/config/apply?t={token}"))
         .json(&json!({"layer":"project","patch":patch}))
@@ -136,6 +144,44 @@ async fn full_round_trip() {
     )
     .unwrap();
     assert_eq!(on_disk["preferences"]["lang"], "en");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn config_apply_creates_first_project_config_under_project_root() {
+    let project = tempfile::tempdir().expect("tempdir");
+    let fake_home = tempfile::tempdir().expect("home tempdir");
+    let (child, url) = spawn_server(project.path().to_path_buf(), fake_home.path());
+    struct Guard(std::process::Child);
+    impl Drop for Guard {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+    let _guard = Guard(child);
+
+    let (base, token) = split_url(&url);
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .build()
+        .unwrap();
+
+    let patch = json!([{ "op": "add", "path": "/profile", "value": "first" }]);
+    let apply: Value = client
+        .post(format!("{base}/api/config/apply?t={token}"))
+        .json(&json!({"layer":"project","patch":patch}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(apply["after"]["profile"], "first");
+
+    let config_path = project.path().join(".hoangsa/config.json");
+    let on_disk: Value =
+        serde_json::from_str(&std::fs::read_to_string(config_path).unwrap()).unwrap();
+    assert_eq!(on_disk["profile"], "first");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -203,6 +249,24 @@ async fn projects_register_switch_round_trip() {
             .any(|s| s == listing["current"]["slug"].as_str().unwrap()),
         "boot project should be auto-registered"
     );
+
+    let file_path = proj_a.path().join("not-a-project");
+    std::fs::write(&file_path, "plain file").unwrap();
+    let register_file = client
+        .post(format!("{base}/api/projects?t={token}"))
+        .json(&json!({ "path": file_path.to_str().unwrap() }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(register_file.status(), 400);
+
+    let switch_file = client
+        .post(format!("{base}/api/projects/switch?t={token}"))
+        .json(&json!({ "path": file_path.to_str().unwrap() }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(switch_file.status(), 400);
 
     // 2. Switch to proj_b by abs path (registers + activates in one call).
     let switched: Value = client

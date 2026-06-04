@@ -26,6 +26,10 @@ fn main() {
         eprintln!("project_dir does not exist: {}", project_dir.display());
         std::process::exit(1);
     }
+    if !project_dir.is_dir() {
+        eprintln!("project_dir is not a directory: {}", project_dir.display());
+        std::process::exit(1);
+    }
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()

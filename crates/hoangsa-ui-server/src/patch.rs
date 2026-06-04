@@ -12,7 +12,7 @@ use serde::Deserialize;
 use serde_json::Value;
 use std::fs;
 use std::io::Write;
-use std::path::Path;
+use std::path::{Component, Path, PathBuf};
 use std::time::SystemTime;
 
 #[derive(Debug, thiserror::Error)]
@@ -27,6 +27,85 @@ pub enum PatchError {
     PatchFailed(json_patch::PatchError),
     #[error("conflict: file changed externally")]
     Conflict,
+    #[error("invalid config path: {0}")]
+    InvalidConfigPath(String),
+}
+
+#[derive(Debug, Clone)]
+pub struct ConfigTarget {
+    path: PathBuf,
+}
+
+impl ConfigTarget {
+    pub fn global(root: &Path) -> Result<Self, PatchError> {
+        Self::from_root_and_relative(root, Path::new("config.json"))
+    }
+
+    pub fn project(root: &Path) -> Result<Self, PatchError> {
+        Self::from_root_and_relative(root, Path::new(".hoangsa/config.json"))
+    }
+
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    fn from_root_and_relative(root: &Path, relative: &Path) -> Result<Self, PatchError> {
+        let root = root.canonicalize().map_err(|e| {
+            PatchError::InvalidConfigPath(format!(
+                "root {} cannot be canonicalized: {e}",
+                root.display()
+            ))
+        })?;
+        let meta = fs::metadata(&root).map_err(|e| {
+            PatchError::InvalidConfigPath(format!("root {} is not readable: {e}", root.display()))
+        })?;
+        if !meta.is_dir() {
+            return Err(PatchError::InvalidConfigPath(format!(
+                "root is not a directory: {}",
+                root.display()
+            )));
+        }
+        validate_relative_config_path(relative)?;
+        Ok(Self {
+            path: root.join(relative),
+        })
+    }
+}
+
+fn validate_relative_config_path(relative: &Path) -> Result<(), PatchError> {
+    if relative.as_os_str().is_empty() || relative.is_absolute() {
+        return Err(PatchError::InvalidConfigPath(format!(
+            "config target must be a non-empty relative path: {}",
+            relative.display()
+        )));
+    }
+    let raw = relative.to_string_lossy();
+    if raw.contains('\\') {
+        return Err(PatchError::InvalidConfigPath(format!(
+            "config target must not contain backslash separators: {}",
+            relative.display()
+        )));
+    }
+    let mut saw_component = false;
+    for component in relative.components() {
+        match component {
+            Component::Normal(_) => saw_component = true,
+            Component::CurDir => {}
+            Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
+                return Err(PatchError::InvalidConfigPath(format!(
+                    "config target contains unsafe component: {}",
+                    relative.display()
+                )));
+            }
+        }
+    }
+    if !saw_component {
+        return Err(PatchError::InvalidConfigPath(format!(
+            "config target must contain a file name: {}",
+            relative.display()
+        )));
+    }
+    Ok(())
 }
 
 #[derive(Deserialize)]
@@ -47,7 +126,8 @@ pub struct PatchOutcome {
     pub mtime_ms: Option<i128>,
 }
 
-pub fn read_target(path: &Path) -> Result<(Value, Option<i128>), PatchError> {
+pub fn read_target(target: &ConfigTarget) -> Result<(Value, Option<i128>), PatchError> {
+    let path = target.path();
     match fs::metadata(path) {
         Ok(meta) => {
             let mtime = mtime_ms(meta.modified().ok());
@@ -62,8 +142,8 @@ pub fn read_target(path: &Path) -> Result<(Value, Option<i128>), PatchError> {
     }
 }
 
-pub fn preview(path: &Path, req: &PatchRequest) -> Result<PatchOutcome, PatchError> {
-    let (before, mtime_ms) = read_target(path)?;
+pub fn preview(target: &ConfigTarget, req: &PatchRequest) -> Result<PatchOutcome, PatchError> {
+    let (before, mtime_ms) = read_target(target)?;
     let after = apply_to_value(&before, &req.patch)?;
     Ok(PatchOutcome {
         before,
@@ -72,8 +152,8 @@ pub fn preview(path: &Path, req: &PatchRequest) -> Result<PatchOutcome, PatchErr
     })
 }
 
-pub fn apply(path: &Path, req: &PatchRequest) -> Result<PatchOutcome, PatchError> {
-    let (before, current_mtime) = read_target(path)?;
+pub fn apply(target: &ConfigTarget, req: &PatchRequest) -> Result<PatchOutcome, PatchError> {
+    let (before, current_mtime) = read_target(target)?;
     if let Some(expected) = req.expected_mtime_ms {
         // Treat absent file as mtime 0 — matches the preview contract.
         let actual = current_mtime.unwrap_or(0);
@@ -82,8 +162,8 @@ pub fn apply(path: &Path, req: &PatchRequest) -> Result<PatchOutcome, PatchError
         }
     }
     let after = apply_to_value(&before, &req.patch)?;
-    write_atomic(path, &after)?;
-    let new_mtime = fs::metadata(path)
+    write_atomic(target, &after)?;
+    let new_mtime = fs::metadata(target.path())
         .ok()
         .and_then(|m| mtime_ms(m.modified().ok()));
     Ok(PatchOutcome {
@@ -104,7 +184,8 @@ fn apply_to_value(before: &Value, patch_json: &Value) -> Result<Value, PatchErro
     Ok(after)
 }
 
-fn write_atomic(path: &Path, value: &Value) -> std::io::Result<()> {
+fn write_atomic(target: &ConfigTarget, value: &Value) -> std::io::Result<()> {
+    let path = target.path();
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
@@ -128,16 +209,21 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    fn target(root: &Path, relative: &str) -> ConfigTarget {
+        ConfigTarget::from_root_and_relative(root, Path::new(relative)).unwrap()
+    }
+
     #[test]
     fn preview_does_not_write() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.json");
         fs::write(&path, r#"{"a": 1}"#).unwrap();
+        let target = target(dir.path(), "config.json");
         let req = PatchRequest {
             patch: json!([{"op":"replace","path":"/a","value":2}]),
             expected_mtime_ms: None,
         };
-        let out = preview(&path, &req).unwrap();
+        let out = preview(&target, &req).unwrap();
         assert_eq!(out.after["a"], json!(2));
         let on_disk: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
         assert_eq!(on_disk["a"], json!(1));
@@ -148,11 +234,12 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.json");
         fs::write(&path, r#"{"a": 1}"#).unwrap();
+        let target = target(dir.path(), "config.json");
         let req = PatchRequest {
             patch: json!([{"op":"replace","path":"/a","value":2}]),
             expected_mtime_ms: None,
         };
-        apply(&path, &req).unwrap();
+        apply(&target, &req).unwrap();
         let raw = fs::read_to_string(&path).unwrap();
         assert!(raw.contains("\"a\": 2"), "got {raw}");
     }
@@ -161,11 +248,12 @@ mod tests {
     fn apply_creates_missing_parent_dirs() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join(".hoangsa/config.json");
+        let target = ConfigTarget::project(dir.path()).unwrap();
         let req = PatchRequest {
             patch: json!([{"op":"add","path":"/a","value":1}]),
             expected_mtime_ms: None,
         };
-        apply(&path, &req).unwrap();
+        apply(&target, &req).unwrap();
         assert!(path.exists());
     }
 
@@ -174,11 +262,61 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.json");
         fs::write(&path, r#"{"a": 1}"#).unwrap();
+        let target = target(dir.path(), "config.json");
         let req = PatchRequest {
             patch: json!([{"op":"replace","path":"/a","value":2}]),
             expected_mtime_ms: Some(1), // intentionally wrong
         };
-        let err = apply(&path, &req).unwrap_err();
+        let err = apply(&target, &req).unwrap_err();
         assert!(matches!(err, PatchError::Conflict), "got {err:?}");
+    }
+
+    #[test]
+    fn config_target_resolves_global_and_project_under_canonical_root() {
+        let dir = tempfile::tempdir().unwrap();
+        let canonical = dir.path().canonicalize().unwrap();
+
+        let global = ConfigTarget::global(dir.path()).unwrap();
+        assert_eq!(global.path(), canonical.join("config.json"));
+
+        let project = ConfigTarget::project(dir.path()).unwrap();
+        assert_eq!(project.path(), canonical.join(".hoangsa/config.json"));
+    }
+
+    #[test]
+    fn config_target_rejects_missing_or_file_roots() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("missing");
+        assert!(matches!(
+            ConfigTarget::global(&missing).unwrap_err(),
+            PatchError::InvalidConfigPath(_)
+        ));
+
+        let file = dir.path().join("file");
+        fs::write(&file, "not a directory").unwrap();
+        assert!(matches!(
+            ConfigTarget::global(&file).unwrap_err(),
+            PatchError::InvalidConfigPath(_)
+        ));
+    }
+
+    #[test]
+    fn config_target_rejects_unsafe_relative_paths() {
+        let dir = tempfile::tempdir().unwrap();
+        for relative in [
+            "/tmp/config.json",
+            "../config.json",
+            ".hoangsa/../config.json",
+            r".hoangsa\config.json",
+        ] {
+            assert!(
+                matches!(
+                    ConfigTarget::from_root_and_relative(dir.path(), Path::new(relative))
+                        .unwrap_err(),
+                    PatchError::InvalidConfigPath(_)
+                ),
+                "relative path should be rejected: {relative}"
+            );
+        }
     }
 }
