@@ -22,7 +22,7 @@ use hoangsa_memory_store::{
 use serde::Deserialize;
 use serde_json::{Value, json};
 use time::OffsetDateTime;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tracing::{debug, warn};
 use uuid::Uuid;
 
@@ -413,7 +413,7 @@ impl Server {
     }
 
     fn tools_list(&self) -> Value {
-        json!({ "tools": tools_catalog() })
+        json!({ "tools": tools_catalog_for_client() })
     }
 
     /// MCP `tools/call` — returns a text-only [`CallToolResult`] (which is
@@ -3071,6 +3071,33 @@ fn tools_catalog() -> Vec<Tool> {
     ]
 }
 
+fn tools_catalog_for_client() -> Vec<Tool> {
+    let tools = tools_catalog();
+    if !matches!(
+        std::env::var("HOANGSA_MCP_CODEX_TOOLS").as_deref(),
+        Ok("1" | "true" | "yes")
+    ) {
+        return tools;
+    }
+
+    const CODEX_SAFE_TOOLS: &[&str] = &[
+        "memory_recall",
+        "memory_index",
+        "memory_wakeup",
+        "memory_detail",
+        "memory_impact",
+        "memory_symbol_context",
+        "memory_detect_changes",
+        "memory_remember_fact",
+        "memory_remember_preference",
+    ];
+
+    tools
+        .into_iter()
+        .filter(|tool| CODEX_SAFE_TOOLS.contains(&tool.name.as_str()))
+        .collect()
+}
+
 // ===========================================================================
 // Prompts catalog
 // ===========================================================================
@@ -3434,23 +3461,18 @@ pub async fn run_stdio(server: Server) -> anyhow::Result<()> {
     let mut line = String::new();
 
     loop {
-        line.clear();
-        let n = tokio::select! {
-            res = reader.read_line(&mut line) => res?,
+        let message = tokio::select! {
+            res = read_stdio_message(&mut reader, &mut line) => res?,
             _ = tokio::signal::ctrl_c() => {
                 debug!("ctrl-c; shutting down mcp");
-                0
+                None
             }
         };
-        if n == 0 {
+        let Some((payload, framing)) = message else {
             break;
-        }
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
+        };
 
-        let response = match serde_json::from_str::<RpcIncoming>(trimmed) {
+        let response = match serde_json::from_str::<RpcIncoming>(&payload) {
             Ok(msg) => server.handle(msg).await,
             Err(e) => Some(RpcResponse::err(
                 Value::Null,
@@ -3459,12 +3481,83 @@ pub async fn run_stdio(server: Server) -> anyhow::Result<()> {
         };
 
         if let Some(resp) = response {
-            let text = serde_json::to_string(&resp)?;
-            stdout.write_all(text.as_bytes()).await?;
-            stdout.write_all(b"\n").await?;
-            stdout.flush().await?;
+            write_stdio_response(&mut stdout, &resp, framing).await?;
         }
     }
+    Ok(())
+}
+
+#[derive(Clone, Copy)]
+enum StdioFraming {
+    Line,
+    ContentLength,
+}
+
+async fn read_stdio_message<R>(
+    reader: &mut R,
+    line: &mut String,
+) -> anyhow::Result<Option<(String, StdioFraming)>>
+where
+    R: AsyncBufReadExt + Unpin,
+{
+    loop {
+        line.clear();
+        let n = reader.read_line(line).await?;
+        if n == 0 {
+            return Ok(None);
+        }
+
+        let trimmed = line.trim_end_matches(&['\r', '\n'][..]);
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        if let Some(raw_len) = trimmed.strip_prefix("Content-Length:") {
+            let len = raw_len.trim().parse::<usize>()?;
+            loop {
+                line.clear();
+                let n = reader.read_line(line).await?;
+                if n == 0 {
+                    anyhow::bail!("unexpected EOF while reading MCP headers");
+                }
+                if line.trim_end_matches(&['\r', '\n'][..]).is_empty() {
+                    break;
+                }
+            }
+
+            let mut body = vec![0u8; len];
+            reader.read_exact(&mut body).await?;
+            return Ok(Some((
+                String::from_utf8(body)?,
+                StdioFraming::ContentLength,
+            )));
+        }
+
+        return Ok(Some((trimmed.to_string(), StdioFraming::Line)));
+    }
+}
+
+async fn write_stdio_response<W>(
+    stdout: &mut W,
+    resp: &RpcResponse,
+    framing: StdioFraming,
+) -> anyhow::Result<()>
+where
+    W: AsyncWriteExt + Unpin,
+{
+    let text = serde_json::to_string(resp)?;
+    match framing {
+        StdioFraming::Line => {
+            stdout.write_all(text.as_bytes()).await?;
+            stdout.write_all(b"\n").await?;
+        }
+        StdioFraming::ContentLength => {
+            let header = format!("Content-Length: {}\r\n\r\n", text.len());
+            stdout.write_all(header.as_bytes()).await?;
+            stdout.write_all(text.as_bytes()).await?;
+        }
+    }
+    stdout.flush().await?;
     Ok(())
 }
 
