@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "hoangsa-memory": {
+      "command": "hoangsa-memory-mcp",
+      "args": [],
+      "startup_timeout_sec": 20,
+      "tool_timeout_sec": 120,
+      "env": {
+        "RUST_LOG": "info"
+      }
+    }
+  }
+}

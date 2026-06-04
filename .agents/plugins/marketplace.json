@@ -1,0 +1,20 @@
+{
+  "name": "hoangsa-local",
+  "interface": {
+    "displayName": "HOANGSA Local"
+  },
+  "plugins": [
+    {
+      "name": "hoangsa-codex",
+      "source": {
+        "source": "local",
+        "path": "./plugins/hoangsa-codex"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

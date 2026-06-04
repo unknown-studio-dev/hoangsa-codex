@@ -55,7 +55,7 @@ curl -fsSL https://github.com/pirumu/hoangsa/releases/latest/download/install.sh
 |------|--------|
 | `--global` | Install globally for this user (default) — writes to the resolved Claude config dir |
 | `--local` | Install for the current project only — writes to `./.claude/` |
-| `--target claude\|codex\|both` | Select the install target. Default is `claude`; `codex` configures memory MCP only. |
+| `--target claude\|codex\|both` | Select the install target. Default is `claude`; `codex` configures Codex memory MCP, skills, guidance, and hooks. |
 | `--no-embed` | Skip pre-downloading the `multilingual-e5-small` weights (~118 MB). They will fetch lazily on first `index` / `query` / `archive ingest`. Useful on bandwidth-constrained links. |
 | `--dry-run` | Print actions without writing files — good for auditing |
 | `--help` | Show the installer help |
@@ -131,8 +131,9 @@ setup.
 
 ### Codex memory mode
 
-Codex support currently targets `hoangsa-memory-mcp` only. It does not
-install Claude slash commands, Claude hooks, or Claude agent templates.
+Codex support uses Codex-native files instead of writing Claude-only
+surfaces. It does not install Claude slash commands or Claude agent
+templates.
 
 ```sh
 hoangsa-cli install --target codex --global
@@ -160,6 +161,36 @@ Use a project-local override only when intentionally pinning one project.
 
 After installing, start Codex in the project and run `/mcp` to confirm
 that `hoangsa-memory` tools are listed.
+
+The installer also routes memory skills to `.agents/skills/hoangsa/`,
+syncs Hoangsa guidance into `AGENTS.md`, and writes conservative Codex
+hook entries under `.codex/hooks.json`. `hsp` shell-output rewriting is
+not enabled for Codex unless explicitly opted in by a later release.
+
+### Codex plugin package
+
+This repo also includes a local Codex plugin package for Desktop/App
+testing:
+
+```text
+plugins/hoangsa-codex/
+.agents/plugins/marketplace.json
+```
+
+The plugin packages the Codex-safe memory skills and a `hoangsa-memory`
+MCP server entry. The MCP command expects `hoangsa-memory-mcp` to be on
+`PATH`, usually from the release installer or a source build.
+
+To test the repo-local marketplace:
+
+```sh
+codex plugin marketplace add .
+codex plugin add hoangsa-codex@hoangsa-local
+```
+
+Hooks are not bundled through the plugin yet. Use
+`hoangsa-cli install --target codex --local` for full project-local
+Codex wiring, including hooks.
 
 ---
 

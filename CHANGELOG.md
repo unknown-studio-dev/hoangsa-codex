@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - New Rust subcommand `hoangsa-cli install [--global|--local] [--install-chroma] [--dry-run]` owning all install logic.
 - CI smoke tests on alpine, ubuntu, and macOS for the install pipeline.
 - `scripts/uninstall.sh [--global|--local] [--dry-run] [--purge]` — standalone POSIX-sh uninstaller that removes binaries, manifest-tracked templates, managed hook entries, the `hoangsa-memory` MCP registration, and the managed PATH block.
+- Local Codex plugin package at `plugins/hoangsa-codex/` with Hoangsa memory skills, MCP metadata, and repo-local marketplace metadata for Desktop/App testing.
 
 ### Removed
 - `--uninstall` flag on `hoangsa-cli install` (was a stub returning exit 4). Use `scripts/uninstall.sh` instead.
