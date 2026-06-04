@@ -81,6 +81,10 @@ hoangsa-cli install --target codex --global
 hoangsa-cli install --target codex --local
 ```
 
+For Codex Desktop/App plugin testing, this repo also contains
+`plugins/hoangsa-codex/`, which bundles the same MCP server entry in
+`.mcp.json` and the Codex-safe memory skills.
+
 Avoid setting global `HOANGSA_MEMORY_ROOT`; project memory should resolve
 from the Codex session working directory. The server also returns concise
 memory-use guidance in its MCP `initialize` response.

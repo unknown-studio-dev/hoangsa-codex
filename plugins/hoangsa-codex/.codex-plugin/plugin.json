@@ -1,0 +1,32 @@
+{
+  "name": "hoangsa-codex",
+  "version": "0.1.0",
+  "description": "Codex integration for HOANGSA memory and context engineering.",
+  "author": {
+    "name": "Unknown Studio"
+  },
+  "license": "MIT",
+  "keywords": [
+    "hoangsa",
+    "codex",
+    "memory",
+    "mcp"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "HOANGSA Codex",
+    "shortDescription": "Use HOANGSA memory from Codex.",
+    "longDescription": "Adds Codex-native HOANGSA memory skills and a hoangsa-memory MCP server entry for local development.",
+    "developerName": "Unknown Studio",
+    "category": "Productivity",
+    "capabilities": [
+      "Memory",
+      "MCP"
+    ],
+    "defaultPrompt": [
+      "Recall Hoangsa memory for this repo.",
+      "Reflect durable lessons from this session."
+    ]
+  },
+  "mcpServers": "./.mcp.json"
+}

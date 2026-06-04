@@ -16,7 +16,7 @@ consistent.
 | Command | Purpose |
 |---------|---------|
 | `hoangsa-cli install --global \| --local` | First-time setup: stage templates, register MCP, seed rules, wire Claude Code hooks |
-| `hoangsa-cli install --target codex --global \| --local` | Register `hoangsa-memory-mcp` in Codex config |
+| `hoangsa-cli install --target codex --global \| --local` | Wire Hoangsa memory into Codex config, skills, guidance, and hooks |
 | `hoangsa-cli session init \| status \| …` | HOANGSA session lifecycle |
 | `hoangsa-cli rule list \| add \| remove \| sync` | Project rule engine (CLAUDE.md guards) |
 | `hoangsa-cli pref get \| set` | Project preferences (`.hoangsa/config.json`) |
@@ -52,15 +52,21 @@ hoangsa-cli install --target codex --local
 hoangsa-cli install --target both --local
 ```
 
-`--target codex` writes only Codex MCP config:
+`--target codex` writes Codex-native memory surfaces:
 
-- global: `~/.codex/config.toml`
-- local: `<project>/.codex/config.toml`
+- MCP config: `~/.codex/config.toml` or `<project>/.codex/config.toml`
+- memory skills: `$HOME/.agents/skills/hoangsa/` or `<project>/.agents/skills/hoangsa/`
+- guidance: `<project>/AGENTS.md`
+- hooks: `~/.codex/hooks.json` or `<project>/.codex/hooks.json`
 
-It preserves other TOML config and existing MCP servers, writes
+The MCP merge preserves other TOML config and existing MCP servers, writes
 `startup_timeout_sec = 20`, `tool_timeout_sec = 120`, and sets
 `RUST_LOG = "info"` for `hoangsa-memory`. It does not set a global
 `HOANGSA_MEMORY_ROOT`.
+
+The repo also ships `plugins/hoangsa-codex/` as a local Codex plugin
+package for skills plus MCP metadata. Direct CLI install remains the
+complete path when a project needs Codex hook entries.
 
 **Contributors** building from a checkout:
 
