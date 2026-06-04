@@ -41,7 +41,10 @@ fn doctor_emits_core_checks() {
         "item=config",
         "item=handlers",
     ] {
-        assert!(out.contains(item), "missing {item} in doctor output:\n{out}");
+        assert!(
+            out.contains(item),
+            "missing {item} in doctor output:\n{out}"
+        );
     }
     // Everything is a machine record, no prose.
     for line in out.lines() {

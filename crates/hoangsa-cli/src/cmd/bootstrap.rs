@@ -87,7 +87,10 @@ pub fn config_opt_out() -> bool {
     let Ok(v): Result<Value, _> = serde_json::from_str(&raw) else {
         return false;
     };
-    matches!(v.get("auto_bootstrap").and_then(|x| x.as_bool()), Some(false))
+    matches!(
+        v.get("auto_bootstrap").and_then(|x| x.as_bool()),
+        Some(false)
+    )
 }
 
 pub fn opt_out_reason(cwd: &Path) -> Option<&'static str> {
@@ -404,8 +407,9 @@ fn emit_result(json_out: bool, status: &str, reason: &str, project: &Path, err: 
 /// Real worker. Each phase transition writes the state file atomically
 /// and appends a log line; on failure we mark the state as `error`.
 fn run_bootstrap(project: &Path) -> Result<(), String> {
-    let memory_bin = find_memory_bin()
-        .ok_or_else(|| "hoangsa-memory binary not found on PATH or in ~/.hoangsa/bin".to_string())?;
+    let memory_bin = find_memory_bin().ok_or_else(|| {
+        "hoangsa-memory binary not found on PATH or in ~/.hoangsa/bin".to_string()
+    })?;
 
     append_log(&format!(
         "start project={} pid={} memory_bin={memory_bin}",

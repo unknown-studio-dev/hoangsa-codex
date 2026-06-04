@@ -154,6 +154,7 @@ struct InstallFlags {
     no_memory: bool,
     skip_path_edit: bool,
     target: InstallTarget,
+    codex_memory_root: Option<PathBuf>,
     /// Value of `--task-manager[=<clickup|asana|none>]`; None when not provided.
     task_manager: Option<String>,
 }
@@ -216,6 +217,16 @@ fn parse_flags(args: &[&str]) -> Result<InstallFlags, String> {
             s if s.starts_with("--target=") => {
                 f.target = InstallTarget::parse(&s["--target=".len()..])?;
             }
+            "--codex-memory-root" => {
+                i += 1;
+                if i >= args.len() {
+                    return Err("--codex-memory-root requires a path".into());
+                }
+                f.codex_memory_root = Some(PathBuf::from(args[i]));
+            }
+            s if s.starts_with("--codex-memory-root=") => {
+                f.codex_memory_root = Some(PathBuf::from(&s["--codex-memory-root=".len()..]));
+            }
             "--task-manager" => {
                 i += 1;
                 if i >= args.len() {
@@ -236,6 +247,14 @@ fn parse_flags(args: &[&str]) -> Result<InstallFlags, String> {
 fn validate(f: &InstallFlags) -> Result<(), String> {
     if f.global && f.local {
         return Err("--global and --local are mutually exclusive".into());
+    }
+    if f.codex_memory_root.is_some() {
+        if !f.target.includes_codex() {
+            return Err("--codex-memory-root requires --target codex or --target both".into());
+        }
+        if f.global {
+            return Err("--codex-memory-root is only valid for local Codex installs".into());
+        }
     }
     Ok(())
 }
@@ -1437,7 +1456,9 @@ pub mod codex_hooks {
             Some(o) => o,
             None => {
                 *hooks_val = Value::Object(serde_json::Map::new());
-                hooks_val.as_object_mut().expect("just replaced with object")
+                hooks_val
+                    .as_object_mut()
+                    .expect("just replaced with object")
             }
         };
         let Some(incoming_hooks) = incoming.get("hooks").and_then(|h| h.as_object()) else {
@@ -1982,6 +2003,7 @@ pnpm-lock.yaml
         command: &Path,
         existing: Option<&TomlValue>,
         preserve_existing_memory_root: bool,
+        memory_root_override: Option<&Path>,
     ) -> TomlValue {
         let mut entry = Table::new();
         entry.insert(
@@ -2008,6 +2030,12 @@ pnpm-lock.yaml
             "RUST_LOG".to_string(),
             TomlValue::String("info".to_string()),
         );
+        if let Some(memory_root) = memory_root_override {
+            env.insert(
+                "HOANGSA_MEMORY_ROOT".to_string(),
+                TomlValue::String(memory_root.display().to_string()),
+            );
+        }
         entry.insert("env".to_string(), TomlValue::Table(env));
 
         TomlValue::Table(entry)
@@ -2017,24 +2045,31 @@ pnpm-lock.yaml
         config_path: &Path,
         memory_bin: &Path,
         preserve_existing_memory_root: bool,
+        memory_root_override: Option<&Path>,
     ) -> io::Result<()> {
         let mut root = load_toml_table(config_path)?;
         let servers = get_or_create_table(&mut root, "mcp_servers");
         let existing = servers.get("hoangsa-memory").cloned();
         servers.insert(
             "hoangsa-memory".to_string(),
-            build_codex_mcp_entry(memory_bin, existing.as_ref(), preserve_existing_memory_root),
+            build_codex_mcp_entry(
+                memory_bin,
+                existing.as_ref(),
+                preserve_existing_memory_root,
+                memory_root_override,
+            ),
         );
         save_toml_table(config_path, &root)
     }
 
     pub fn register_codex_mcp_global_to(config_path: &Path, memory_bin: &Path) -> io::Result<()> {
-        merge_codex_mcp_entry(config_path, memory_bin, false)
+        merge_codex_mcp_entry(config_path, memory_bin, false, None)
     }
 
     pub fn register_codex_mcp_local_to(
         config_path: &Path,
         memory_bin: &Path,
+        memory_root_override: Option<&Path>,
     ) -> Result<(), InstallError> {
         if !memory_bin.exists() {
             return Err(InstallError {
@@ -2045,9 +2080,11 @@ pnpm-lock.yaml
                 ),
             });
         }
-        merge_codex_mcp_entry(config_path, memory_bin, true).map_err(|e| InstallError {
-            exit_code: 1,
-            message: format!("write {}: {}", config_path.display(), e),
+        merge_codex_mcp_entry(config_path, memory_bin, true, memory_root_override).map_err(|e| {
+            InstallError {
+                exit_code: 1,
+                message: format!("write {}: {}", config_path.display(), e),
+            }
         })
     }
 
@@ -2063,12 +2100,19 @@ pnpm-lock.yaml
         register_codex_mcp_global_to(&config_path, &memory_bin).map_err(|e| e.to_string())
     }
 
-    pub fn register_codex_mcp_local(cwd: &Path) -> Result<(), InstallError> {
+    pub fn register_codex_mcp_local(
+        cwd: &Path,
+        memory_root_override: Option<&Path>,
+    ) -> Result<(), InstallError> {
         let memory_bin = memory_mcp_bin().map_err(|m| InstallError {
             exit_code: 1,
             message: m,
         })?;
-        register_codex_mcp_local_to(&codex_local_config_path(cwd), &memory_bin)
+        register_codex_mcp_local_to(
+            &codex_local_config_path(cwd),
+            &memory_bin,
+            memory_root_override,
+        )
     }
 
     /// Load a JSON object from disk or return `{}` on missing / unreadable
@@ -2650,7 +2694,7 @@ HOANGSA_MEMORY_ROOT = "/project/.hoangsa/memory"
             let bin = cwd.path().join("hoangsa-memory-mcp");
             fs::write(&bin, "#!/bin/sh\n").expect("fake bin");
 
-            register_codex_mcp_local_to(&config, &bin).expect("register");
+            register_codex_mcp_local_to(&config, &bin, None).expect("register");
 
             let raw = fs::read_to_string(&config).expect("read back");
             let back: TomlValue = raw.parse().expect("parse toml");
@@ -2658,6 +2702,26 @@ HOANGSA_MEMORY_ROOT = "/project/.hoangsa/memory"
             assert_eq!(
                 hoangsa["env"]["HOANGSA_MEMORY_ROOT"].as_str(),
                 Some("/project/.hoangsa/memory")
+            );
+            assert_eq!(hoangsa["env"]["RUST_LOG"].as_str(), Some("info"));
+        }
+
+        #[test]
+        fn codex_local_merge_writes_explicit_memory_root() {
+            let cwd = tempdir().expect("cwd tempdir");
+            let config = codex_local_config_path(cwd.path());
+            let bin = cwd.path().join("hoangsa-memory-mcp");
+            fs::write(&bin, "#!/bin/sh\n").expect("fake bin");
+            let memory_root = cwd.path().join(".hoangsa/memory");
+
+            register_codex_mcp_local_to(&config, &bin, Some(&memory_root)).expect("register");
+
+            let raw = fs::read_to_string(&config).expect("read back");
+            let back: TomlValue = raw.parse().expect("parse toml");
+            let hoangsa = &back["mcp_servers"]["hoangsa-memory"];
+            assert_eq!(
+                hoangsa["env"]["HOANGSA_MEMORY_ROOT"].as_str(),
+                Some(memory_root.display().to_string().as_str())
             );
             assert_eq!(hoangsa["env"]["RUST_LOG"].as_str(), Some("info"));
         }
@@ -3123,6 +3187,7 @@ pub fn cmd_install(args: &[&str]) {
                     actions_json.push(json!({
                         "action": "register_codex_mcp_local",
                         "target": mode::codex_local_config_path(&cwd),
+                        "codex_memory_root": flags.codex_memory_root,
                     }));
                 }
                 _ => {}
@@ -3157,6 +3222,7 @@ pub fn cmd_install(args: &[&str]) {
                 "target": flags.target.as_str(),
                 "no_memory": flags.no_memory,
                 "skip_path_edit": flags.skip_path_edit,
+                "codex_memory_root": flags.codex_memory_root,
                 "task_manager": flags.task_manager
             }
         });
@@ -3212,7 +3278,9 @@ pub fn cmd_install(args: &[&str]) {
                 }
             }
             "local" => {
-                if let Err(e) = mode::register_codex_mcp_local(&cwd) {
+                if let Err(e) =
+                    mode::register_codex_mcp_local(&cwd, flags.codex_memory_root.as_deref())
+                {
                     eprintln!("install: {}", e.message);
                     std::process::exit(e.exit_code);
                 }
@@ -3263,6 +3331,7 @@ pub fn cmd_install(args: &[&str]) {
             "codex_mcp_target": mcp_target,
             "codex_hooks": codex_hooks_file,
             "codex_hooks_added": codex_hooks_added,
+            "codex_memory_root": flags.codex_memory_root,
             "codex_skills_root": codex_skills_root,
             "codex_skills_copied": codex_skills_copied,
             "codex_skills_skipped_missing": codex_skills_skipped_missing,
@@ -3536,7 +3605,9 @@ pub fn cmd_install(args: &[&str]) {
                 }
             }
             "local" => {
-                if let Err(e) = mode::register_codex_mcp_local(&cwd) {
+                if let Err(e) =
+                    mode::register_codex_mcp_local(&cwd, flags.codex_memory_root.as_deref())
+                {
                     eprintln!("install: {}", e.message);
                     std::process::exit(e.exit_code);
                 }
@@ -3596,6 +3667,7 @@ pub fn cmd_install(args: &[&str]) {
         "statusline_set": statusline_set,
         "codex_hooks": codex_hooks_file,
         "codex_hooks_added": codex_hooks_added,
+        "codex_memory_root": flags.codex_memory_root,
         "memory_relocated": memory_relocated,
         "memory_skipped_missing": memory_skipped_missing,
         "memory_note": memory_note,
@@ -3681,9 +3753,43 @@ mod tests {
     }
 
     #[test]
+    fn codex_memory_root_value_forms() {
+        let a = parse_flags(&[
+            "--target",
+            "codex",
+            "--local",
+            "--codex-memory-root",
+            "/repo/.hoangsa/memory",
+        ])
+        .expect("space form");
+        assert_eq!(
+            a.codex_memory_root.as_deref(),
+            Some(Path::new("/repo/.hoangsa/memory"))
+        );
+        let b = parse_flags(&["--target=both", "--codex-memory-root=/repo/.hoangsa/memory"])
+            .expect("equals form");
+        assert_eq!(
+            b.codex_memory_root.as_deref(),
+            Some(Path::new("/repo/.hoangsa/memory"))
+        );
+    }
+
+    #[test]
     fn global_and_local_are_mutually_exclusive() {
         let f = parse_flags(&["--global", "--local"]).expect("parse");
         assert!(validate(&f).is_err());
+    }
+
+    #[test]
+    fn codex_memory_root_requires_local_codex_target() {
+        let f = parse_flags(&["--target", "claude", "--codex-memory-root", "/x"]).expect("parse");
+        assert!(validate(&f).is_err());
+        let f = parse_flags(&["--target", "codex", "--global", "--codex-memory-root", "/x"])
+            .expect("parse");
+        assert!(validate(&f).is_err());
+        let f = parse_flags(&["--target", "both", "--local", "--codex-memory-root", "/x"])
+            .expect("parse");
+        assert!(validate(&f).is_ok());
     }
 
     #[test]

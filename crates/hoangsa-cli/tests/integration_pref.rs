@@ -129,11 +129,17 @@ fn test_profile_roundtrip_balanced() {
     init_config(dir);
 
     let (stdout, stderr, success) = run_cli(&["pref", "set", &dir_str, "profile", "balanced"]);
-    assert!(success, "pref set profile balanced failed; stderr: {stderr}");
+    assert!(
+        success,
+        "pref set profile balanced failed; stderr: {stderr}"
+    );
 
     let v = parse_json(&stdout);
     assert_eq!(v["success"], true, "expected success=true; got: {v}");
-    assert_eq!(v["profile"], "balanced", "expected profile=balanced; got: {v}");
+    assert_eq!(
+        v["profile"], "balanced",
+        "expected profile=balanced; got: {v}"
+    );
 
     // Verify each of the 6 keys via pref get
     let expected: &[(&str, Value)] = &[
@@ -208,9 +214,11 @@ fn test_individual_override_after_balanced_profile() {
     assert!(ok, "pref set profile balanced failed; stderr: {err}");
 
     // Now override one key
-    let (set_out, set_err, set_ok) =
-        run_cli(&["pref", "set", &dir_str, "simplify_pass", "true"]);
-    assert!(set_ok, "pref set simplify_pass true failed; stderr: {set_err}");
+    let (set_out, set_err, set_ok) = run_cli(&["pref", "set", &dir_str, "simplify_pass", "true"]);
+    assert!(
+        set_ok,
+        "pref set simplify_pass true failed; stderr: {set_err}"
+    );
     let sv = parse_json(&set_out);
     assert_eq!(sv["success"], true, "expected success=true; got: {sv}");
     assert_eq!(sv["value"], true, "expected value=true; got: {sv}");
@@ -219,7 +227,10 @@ fn test_individual_override_after_balanced_profile() {
     let (get_out, get_err, get_ok) = run_cli(&["pref", "get", &dir_str, "simplify_pass"]);
     assert!(get_ok, "pref get simplify_pass failed; stderr: {get_err}");
     let gv = parse_json(&get_out);
-    assert_eq!(gv["value"], true, "simplify_pass must be true after override; got: {gv}");
+    assert_eq!(
+        gv["value"], true,
+        "simplify_pass must be true after override; got: {gv}"
+    );
 
     // The other 5 balanced keys must remain at their balanced defaults
     let unchanged: &[(&str, Value)] = &[
@@ -288,7 +299,10 @@ fn test_pref_get_all_after_set() {
     assert!(get_ok, "pref get (all) failed; stderr: {get_err}");
     let gv = parse_json(&get_out);
 
-    assert!(gv.is_object(), "pref get (all) must return a JSON object; got: {gv}");
+    assert!(
+        gv.is_object(),
+        "pref get (all) must return a JSON object; got: {gv}"
+    );
     assert!(
         gv["test_runs"].is_number(),
         "test_runs in full dump must be a JSON number; got: {}",
@@ -313,8 +327,7 @@ fn test_unknown_profile_returns_error() {
     let dir_str = dir.to_string_lossy();
     init_config(dir);
 
-    let (stdout, _stderr, _success) =
-        run_cli(&["pref", "set", &dir_str, "profile", "turbo_mode"]);
+    let (stdout, _stderr, _success) = run_cli(&["pref", "set", &dir_str, "profile", "turbo_mode"]);
     let v = parse_json(&stdout);
     assert!(
         v.get("error").is_some(),
@@ -338,13 +351,15 @@ fn test_context_selective_line_range() {
     init_config(workspace_dir);
     let (_, set_err, set_ok) =
         run_cli(&["pref", "set", &workspace_str, "context_mode", "selective"]);
-    assert!(set_ok, "pref set context_mode selective failed; stderr: {set_err}");
+    assert!(
+        set_ok,
+        "pref set context_mode selective failed; stderr: {set_err}"
+    );
 
     // Write plan.json with a line-range file spec (lines 3-7)
     write_plan_with_context(session_dir, workspace_dir, true);
 
-    let (stdout, stderr, success) =
-        run_cli(&["context", "get", &workspace_str, "T-01"]);
+    let (stdout, stderr, success) = run_cli(&["context", "get", &workspace_str, "T-01"]);
     assert!(success, "context get failed; stderr: {stderr}");
 
     let v = parse_json(&stdout);
@@ -362,10 +377,15 @@ fn test_context_selective_line_range() {
     );
 
     let seg = &segments[0];
-    let start_line = seg["start_line"].as_u64().expect("start_line must be a number");
+    let start_line = seg["start_line"]
+        .as_u64()
+        .expect("start_line must be a number");
     let end_line = seg["end_line"].as_u64().expect("end_line must be a number");
 
-    assert_eq!(start_line, 3, "selective mode: start_line must be 3; got: {seg}");
+    assert_eq!(
+        start_line, 3,
+        "selective mode: start_line must be 3; got: {seg}"
+    );
     assert!(
         end_line <= 7,
         "selective mode: end_line must be <= 7; got end_line={end_line}"
@@ -376,12 +396,13 @@ fn test_context_selective_line_range() {
     for line in lines_text.lines() {
         // Each line is "// line N" — verify N is in [3, 7]
         if let Some(n_str) = line.strip_prefix("// line ")
-            && let Ok(n) = n_str.trim().parse::<usize>() {
-                assert!(
-                    (3..=7).contains(&n),
-                    "selective mode: line {n} is outside the requested range 3-7"
-                );
-            }
+            && let Ok(n) = n_str.trim().parse::<usize>()
+        {
+            assert!(
+                (3..=7).contains(&n),
+                "selective mode: line {n} is outside the requested range 3-7"
+            );
+        }
     }
 }
 
@@ -396,27 +417,36 @@ fn test_context_full_mode_ignores_line_range() {
     let workspace_str = workspace_dir.to_string_lossy();
 
     init_config(workspace_dir);
-    let (_, set_err, set_ok) =
-        run_cli(&["pref", "set", &workspace_str, "context_mode", "full"]);
-    assert!(set_ok, "pref set context_mode full failed; stderr: {set_err}");
+    let (_, set_err, set_ok) = run_cli(&["pref", "set", &workspace_str, "context_mode", "full"]);
+    assert!(
+        set_ok,
+        "pref set context_mode full failed; stderr: {set_err}"
+    );
 
     // Plan uses a line-range spec but context_mode is full — all lines expected
     write_plan_with_context(session_dir, workspace_dir, true);
 
-    let (stdout, stderr, success) =
-        run_cli(&["context", "get", &workspace_str, "T-01"]);
+    let (stdout, stderr, success) = run_cli(&["context", "get", &workspace_str, "T-01"]);
     assert!(success, "context get failed; stderr: {stderr}");
 
     let v = parse_json(&stdout);
-    assert!(v.get("error").is_none(), "context get must not return an error; got: {v}");
+    assert!(
+        v.get("error").is_none(),
+        "context get must not return an error; got: {v}"
+    );
 
     let segments = v["file_segments"]
         .as_array()
         .expect("file_segments must be an array");
-    assert!(!segments.is_empty(), "file_segments must not be empty; got: {v}");
+    assert!(
+        !segments.is_empty(),
+        "file_segments must not be empty; got: {v}"
+    );
 
     let seg = &segments[0];
-    let start_line = seg["start_line"].as_u64().expect("start_line must be a number");
+    let start_line = seg["start_line"]
+        .as_u64()
+        .expect("start_line must be a number");
     let end_line = seg["end_line"].as_u64().expect("end_line must be a number");
 
     // Full mode always starts at 1 and includes all lines (20 lines in our fixture)
@@ -438,8 +468,7 @@ fn test_context_get_missing_task_returns_error() {
     init_config(workspace_dir);
     write_plan_with_context(session_dir, workspace_dir, false);
 
-    let (stdout, _stderr, _success) =
-        run_cli(&["context", "get", &workspace_str, "T-NONEXISTENT"]);
+    let (stdout, _stderr, _success) = run_cli(&["context", "get", &workspace_str, "T-NONEXISTENT"]);
     let v = parse_json(&stdout);
     assert!(
         v.get("error").is_some(),

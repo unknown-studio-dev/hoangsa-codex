@@ -1,11 +1,11 @@
 //! End-to-end test: index a small project → run hybrid recall → sanity-check
 //! that the chunks we expect come back.
 
-use tempfile::{TempDir, tempdir};
 use hoangsa_memory_core::Query;
 use hoangsa_memory_parse::LanguageRegistry;
 use hoangsa_memory_retrieve::{Indexer, Retriever};
 use hoangsa_memory_store::StoreRoot;
+use tempfile::{TempDir, tempdir};
 
 /// Open a fresh in-memory-equivalent store backed by a temp directory.
 /// Returns the `TempDir` guard (must stay alive) and the `StoreRoot`.

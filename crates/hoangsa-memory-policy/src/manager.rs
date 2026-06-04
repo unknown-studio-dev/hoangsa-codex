@@ -224,9 +224,9 @@ impl MemoryManager {
 
 #[cfg(test)]
 mod history_tests {
-    use tempfile::tempdir;
     use hoangsa_memory_core::{Fact, Lesson, MemoryKind, MemoryMeta};
     use hoangsa_memory_store::markdown::MarkdownStore;
+    use tempfile::tempdir;
 
     fn fact(text: &str) -> Fact {
         Fact {

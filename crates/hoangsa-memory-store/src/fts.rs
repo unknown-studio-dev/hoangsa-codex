@@ -10,12 +10,12 @@
 use std::path::Path;
 use std::sync::Arc;
 
+use hoangsa_memory_core::{Error, Result};
 use parking_lot::Mutex;
 use tantivy::collector::TopDocs;
 use tantivy::query::{BooleanQuery, FuzzyTermQuery, Occur, Query, QueryParser};
 use tantivy::schema::{FAST, Field, STORED, STRING, Schema, TEXT, Value};
 use tantivy::{Index, IndexReader, IndexWriter, TantivyDocument, Term, doc};
-use hoangsa_memory_core::{Error, Result};
 
 const WRITER_HEAP_BYTES: usize = 64 * 1024 * 1024; // 64 MiB
 
@@ -259,9 +259,10 @@ impl FtsIndex {
             // once more before giving up. Runs in the same blocking task
             // so hot-path (non-empty result) pays nothing.
             if top.is_empty()
-                && let Some(fz) = build_fuzzy_query(&sanitised, &fields) {
-                    top = searcher.search(&fz, &collector).map_err(store)?;
-                }
+                && let Some(fz) = build_fuzzy_query(&sanitised, &fields)
+            {
+                top = searcher.search(&fz, &collector).map_err(store)?;
+            }
 
             let mut out = Vec::with_capacity(top.len());
             for (score, addr) in top {
@@ -325,8 +326,7 @@ fn build_fuzzy_query(raw: &str, fields: &Fields) -> Option<Box<dyn Query>> {
         let distance: u8 = if tok.len() >= 8 { 2 } else { 1 };
         for field in [fields.body, fields.symbol] {
             let term = Term::from_field_text(field, tok);
-            let q: Box<dyn Query> =
-                Box::new(FuzzyTermQuery::new(term, distance, true));
+            let q: Box<dyn Query> = Box::new(FuzzyTermQuery::new(term, distance, true));
             clauses.push((Occur::Should, q));
         }
     }

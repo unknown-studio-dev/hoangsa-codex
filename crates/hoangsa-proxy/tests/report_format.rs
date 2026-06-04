@@ -50,12 +50,7 @@ fn assert_machine_format(stderr: &str) {
 #[cfg(unix)]
 #[test]
 fn color_strip_emits_machine_record_and_hint() {
-    let (_stdout, stderr, code) = run_hsp(&[
-        "run",
-        "sh",
-        "-c",
-        "printf '\\033[31mred\\033[0m\\n'",
-    ]);
+    let (_stdout, stderr, code) = run_hsp(&["run", "sh", "-c", "printf '\\033[31mred\\033[0m\\n'"]);
     assert_eq!(code, Some(0));
     assert_machine_format(&stderr);
     // Summary is there.
@@ -76,13 +71,7 @@ fn color_strip_emits_machine_record_and_hint() {
 #[cfg(unix)]
 #[test]
 fn keep_color_no_ansi_no_report() {
-    let (_stdout, stderr, code) = run_hsp(&[
-        "run",
-        "--keep-color",
-        "sh",
-        "-c",
-        "printf hi",
-    ]);
+    let (_stdout, stderr, code) = run_hsp(&["run", "--keep-color", "sh", "-c", "printf hi"]);
     assert_eq!(code, Some(0));
     assert!(stderr.is_empty() || !stderr.contains("[hsp"));
 }
@@ -131,12 +120,7 @@ fn hsp_strict_env_sets_strict() {
 #[cfg(unix)]
 #[test]
 fn records_are_single_line() {
-    let (_stdout, stderr, _) = run_hsp(&[
-        "run",
-        "sh",
-        "-c",
-        "printf '\\033[31mred\\033[0m\\n'",
-    ]);
+    let (_stdout, stderr, _) = run_hsp(&["run", "sh", "-c", "printf '\\033[31mred\\033[0m\\n'"]);
     // No record spans multiple lines. Each line independently parseable.
     for line in stderr.lines() {
         assert!(!line.is_empty() || line.is_empty()); // sanity

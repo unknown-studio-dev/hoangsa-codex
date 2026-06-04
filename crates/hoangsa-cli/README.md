@@ -50,6 +50,7 @@ Codex memory mode is available through:
 hoangsa-cli install --target codex --global
 hoangsa-cli install --target codex --local
 hoangsa-cli install --target both --local
+hoangsa-cli install --target codex --local --codex-memory-root "$PWD/.hoangsa/memory"
 ```
 
 `--target codex` writes Codex-native memory surfaces:
@@ -62,11 +63,16 @@ hoangsa-cli install --target both --local
 The MCP merge preserves other TOML config and existing MCP servers, writes
 `startup_timeout_sec = 20`, `tool_timeout_sec = 120`, and sets
 `RUST_LOG = "info"` for `hoangsa-memory`. It does not set a global
-`HOANGSA_MEMORY_ROOT`.
+`HOANGSA_MEMORY_ROOT`. `--codex-memory-root <path>` is local-only and
+writes that override only to the project `.codex/config.toml`.
+
+TOML preservation is semantic: unrelated settings and servers remain after
+parse/write, but comments and original formatting are not preserved.
 
 The repo also ships `plugins/hoangsa-codex/` as a local Codex plugin
 package for skills plus MCP metadata. Direct CLI install remains the
-complete path when a project needs Codex hook entries.
+complete path when a project needs Codex hook entries; plugin hook bundling
+is deferred until the Codex plugin hook schema is validated.
 
 **Contributors** building from a checkout:
 

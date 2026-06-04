@@ -70,13 +70,13 @@ struct Glyphs {
 }
 
 const NERD: Glyphs = Glyphs {
-    phase: "🏷️",     // ⏻
-    git: "🌿",       // ⎚
-    model: "🤖",     // nf-fa-microchip
-    folder: "🗂️",    // nf-fa-folder
-    warn: "⚠️",      // ⚠
-    ahead: "⬆",     // ↑
-    behind: "⬇",    // ↓
+    phase: "🏷️",  // ⏻
+    git: "🌿",    // ⎚
+    model: "🤖",  // nf-fa-microchip
+    folder: "🗂️", // nf-fa-folder
+    warn: "⚠️",   // ⚠
+    ahead: "⬆",   // ↑
+    behind: "⬇",  // ↓
     dirty: "🔥",
 };
 
@@ -105,14 +105,30 @@ impl Theme {
             format!("\x1b[{code}m{text}\x1b[0m")
         }
     }
-    fn blue(&self, t: &str) -> String { self.wrap("34", t) }
-    fn cyan(&self, t: &str) -> String { self.wrap("36", t) }
-    fn green(&self, t: &str) -> String { self.wrap("32", t) }
-    fn yellow(&self, t: &str) -> String { self.wrap("33", t) }
-    fn red(&self, t: &str) -> String { self.wrap("31", t) }
-    fn magenta(&self, t: &str) -> String { self.wrap("35", t) }
-    fn dim(&self, t: &str) -> String { self.wrap("2", t) }
-    fn bold(&self, t: &str) -> String { self.wrap("1", t) }
+    fn blue(&self, t: &str) -> String {
+        self.wrap("34", t)
+    }
+    fn cyan(&self, t: &str) -> String {
+        self.wrap("36", t)
+    }
+    fn green(&self, t: &str) -> String {
+        self.wrap("32", t)
+    }
+    fn yellow(&self, t: &str) -> String {
+        self.wrap("33", t)
+    }
+    fn red(&self, t: &str) -> String {
+        self.wrap("31", t)
+    }
+    fn magenta(&self, t: &str) -> String {
+        self.wrap("35", t)
+    }
+    fn dim(&self, t: &str) -> String {
+        self.wrap("2", t)
+    }
+    fn bold(&self, t: &str) -> String {
+        self.wrap("1", t)
+    }
 }
 
 // ── environment ─────────────────────────────────────────────────────────────
@@ -127,7 +143,9 @@ struct Env {
 impl Env {
     fn detect() -> Self {
         let color = std::env::var_os("NO_COLOR").is_none();
-        let ascii = std::env::var("HOANGSA_STATUSLINE_ASCII").map(|v| v == "1").unwrap_or(false);
+        let ascii = std::env::var("HOANGSA_STATUSLINE_ASCII")
+            .map(|v| v == "1")
+            .unwrap_or(false);
         let home = std::env::var_os("HOME").map(PathBuf::from);
         let run_dir = home
             .clone()
@@ -168,7 +186,9 @@ fn find_active_session(cwd: &Path) -> Option<(String, String)> {
         if !t.file_type().ok()?.is_dir() {
             continue;
         }
-        let Ok(names) = fs::read_dir(t.path()) else { continue };
+        let Ok(names) = fs::read_dir(t.path()) else {
+            continue;
+        };
         for n in names.filter_map(|e| e.ok()) {
             if !n.file_type().map(|f| f.is_dir()).unwrap_or(false) {
                 continue;
@@ -224,10 +244,14 @@ fn git(cwd: &Path, args: &[&str], timeout: Duration) -> Option<String> {
 
 fn seg_git(env: &Env, cwd: &Path) -> Option<String> {
     let timeout = Duration::from_millis(200);
-    let branch = git(cwd, &["symbolic-ref", "--quiet", "--short", "HEAD"], timeout)
-        .or_else(|| git(cwd, &["rev-parse", "--short", "HEAD"], timeout))?
-        .trim()
-        .to_string();
+    let branch = git(
+        cwd,
+        &["symbolic-ref", "--quiet", "--short", "HEAD"],
+        timeout,
+    )
+    .or_else(|| git(cwd, &["rev-parse", "--short", "HEAD"], timeout))?
+    .trim()
+    .to_string();
     if branch.is_empty() {
         return None;
     }
@@ -237,14 +261,18 @@ fn seg_git(env: &Env, cwd: &Path) -> Option<String> {
         .unwrap_or(0);
 
     // ahead/behind vs upstream — silent if no upstream configured.
-    let (ahead, behind) = git(cwd, &["rev-list", "--left-right", "--count", "@{u}...HEAD"], timeout)
-        .and_then(|s| {
-            let mut parts = s.split_whitespace();
-            let behind: usize = parts.next()?.parse().ok()?;
-            let ahead: usize = parts.next()?.parse().ok()?;
-            Some((ahead, behind))
-        })
-        .unwrap_or((0, 0));
+    let (ahead, behind) = git(
+        cwd,
+        &["rev-list", "--left-right", "--count", "@{u}...HEAD"],
+        timeout,
+    )
+    .and_then(|s| {
+        let mut parts = s.split_whitespace();
+        let behind: usize = parts.next()?.parse().ok()?;
+        let ahead: usize = parts.next()?.parse().ok()?;
+        Some((ahead, behind))
+    })
+    .unwrap_or((0, 0));
 
     let g = env.glyphs;
     let mut out = format!("{} {}", g.git, env.theme.bold(&branch));
@@ -261,7 +289,11 @@ fn seg_git(env: &Env, cwd: &Path) -> Option<String> {
             s.push_str(&format!("{}{}", g.behind, behind));
         }
         out.push(' ');
-        out.push_str(&if behind > 0 { env.theme.red(&s) } else { env.theme.dim(&s) });
+        out.push_str(&if behind > 0 {
+            env.theme.red(&s)
+        } else {
+            env.theme.dim(&s)
+        });
     }
     Some(out)
 }
@@ -273,7 +305,11 @@ fn seg_model_cost(env: &Env, input: &Input, baseline: f64) -> String {
         .and_then(|m| m.display_name.clone().or_else(|| m.id.clone()))
         .unwrap_or_else(|| "claude".into());
     let model = shorten_model(&model);
-    let total = input.cost.as_ref().and_then(|c| c.total_cost_usd).unwrap_or(0.0);
+    let total = input
+        .cost
+        .as_ref()
+        .and_then(|c| c.total_cost_usd)
+        .unwrap_or(0.0);
     let cost = (total - baseline).max(0.0);
     let cost_str = format!("${cost:.2}");
     let cost_colored = if cost < 1.0 {
@@ -288,7 +324,13 @@ fn seg_model_cost(env: &Env, input: &Input, baseline: f64) -> String {
     } else {
         String::new()
     };
-    format!("{} {}  {}{}", env.glyphs.model, env.theme.cyan(&model), cost_colored, warn)
+    format!(
+        "{} {}  {}{}",
+        env.glyphs.model,
+        env.theme.cyan(&model),
+        cost_colored,
+        warn
+    )
 }
 
 fn shorten_model(name: &str) -> String {
@@ -396,7 +438,11 @@ fn seg_memory(env: &Env, cwd: &Path) -> Option<String> {
         .map(|head| head > mtime)
         .unwrap_or(false);
     if stale_by_age || stale_by_head {
-        Some(format!("{} {}", env.glyphs.warn, env.theme.yellow("reindex")))
+        Some(format!(
+            "{} {}",
+            env.glyphs.warn,
+            env.theme.yellow("reindex")
+        ))
     } else {
         None
     }
@@ -409,8 +455,20 @@ fn resolve_cwd(input: &Input) -> PathBuf {
         .cwd
         .as_ref()
         .map(PathBuf::from)
-        .or_else(|| input.workspace.as_ref().and_then(|w| w.current_dir.clone()).map(PathBuf::from))
-        .or_else(|| input.workspace.as_ref().and_then(|w| w.project_dir.clone()).map(PathBuf::from))
+        .or_else(|| {
+            input
+                .workspace
+                .as_ref()
+                .and_then(|w| w.current_dir.clone())
+                .map(PathBuf::from)
+        })
+        .or_else(|| {
+            input
+                .workspace
+                .as_ref()
+                .and_then(|w| w.project_dir.clone())
+                .map(PathBuf::from)
+        })
         .or_else(|| std::env::current_dir().ok())
         .unwrap_or_else(|| PathBuf::from("."))
 }
@@ -437,7 +495,11 @@ fn render(env: &Env, input: &Input, baseline: f64) -> String {
     let sep = "  ";
     let l1 = line1.join(sep);
     let l2 = line2.join(sep);
-    if l1.is_empty() { l2 } else { format!("{l1}\n{l2}") }
+    if l1.is_empty() {
+        l2
+    } else {
+        format!("{l1}\n{l2}")
+    }
 }
 
 // ── cost state (per-session baseline for /clear reset) ─────────────────────
@@ -472,7 +534,9 @@ pub(crate) fn write_cost_state(path: &Path, state: &CostState) {
         return;
     }
     let tmp = path.with_extension("json.tmp");
-    let Ok(payload) = serde_json::to_string(state) else { return };
+    let Ok(payload) = serde_json::to_string(state) else {
+        return;
+    };
     if fs::write(&tmp, payload).is_ok() {
         let _ = fs::rename(&tmp, path);
     }
@@ -492,7 +556,11 @@ fn sync_cost_state(run_dir: &Path, session_id: Option<&str>, total: f64) -> f64 
     };
     write_cost_state(
         &path,
-        &CostState { session_id: sid.to_string(), last_seen: total, baseline },
+        &CostState {
+            session_id: sid.to_string(),
+            last_seen: total,
+            baseline,
+        },
     );
     baseline
 }
@@ -509,7 +577,13 @@ fn cache_key(input: &Input, cwd: &Path, env: &Env, baseline: f64) -> String {
         h.update(m.id.as_deref().unwrap_or("").as_bytes());
     }
     h.update(b"|");
-    let cost_cents = (input.cost.as_ref().and_then(|c| c.total_cost_usd).unwrap_or(0.0) * 100.0).round() as i64;
+    let cost_cents = (input
+        .cost
+        .as_ref()
+        .and_then(|c| c.total_cost_usd)
+        .unwrap_or(0.0)
+        * 100.0)
+        .round() as i64;
     h.update(cost_cents.to_le_bytes());
     h.update(b"|");
     let baseline_cents = (baseline * 100.0).round() as i64;
@@ -543,7 +617,8 @@ fn cache_key(input: &Input, cwd: &Path, env: &Env, baseline: f64) -> String {
         for t in rd.filter_map(|e| e.ok()) {
             if let Ok(rd2) = fs::read_dir(t.path()) {
                 for n in rd2.filter_map(|e| e.ok()) {
-                    if let Ok(m) = fs::metadata(n.path().join("state.json")).and_then(|m| m.modified())
+                    if let Ok(m) =
+                        fs::metadata(n.path().join("state.json")).and_then(|m| m.modified())
                         && let Ok(d) = m.duration_since(UNIX_EPOCH)
                     {
                         h.update(d.as_nanos().to_le_bytes());
@@ -592,7 +667,11 @@ pub fn cmd_statusline() {
     let env = Env::detect();
     let cwd = resolve_cwd(&input);
 
-    let total = input.cost.as_ref().and_then(|c| c.total_cost_usd).unwrap_or(0.0);
+    let total = input
+        .cost
+        .as_ref()
+        .and_then(|c| c.total_cost_usd)
+        .unwrap_or(0.0);
     let baseline = sync_cost_state(&env.run_dir, input.session_id.as_deref(), total);
 
     let key = cache_key(&input, &cwd, &env, baseline);
@@ -659,8 +738,13 @@ mod tests {
     fn render_idle_has_no_session_segment() {
         let env = plain_env();
         let input = Input {
-            model: Some(Model { display_name: Some("claude-opus-4-7".into()), id: None }),
-            cost: Some(Cost { total_cost_usd: Some(0.12) }),
+            model: Some(Model {
+                display_name: Some("claude-opus-4-7".into()),
+                id: None,
+            }),
+            cost: Some(Cost {
+                total_cost_usd: Some(0.12),
+            }),
             cwd: Some("/tmp/does-not-exist-xyz".into()),
             ..Default::default()
         };
@@ -675,30 +759,53 @@ mod tests {
         let mut env = plain_env();
         env.theme.enabled = true;
         let base = || Input {
-            model: Some(Model { display_name: Some("claude-opus-4-7".into()), id: None }),
+            model: Some(Model {
+                display_name: Some("claude-opus-4-7".into()),
+                id: None,
+            }),
             cwd: Some("/tmp".into()),
             ..Default::default()
         };
 
         let mut cheap = base();
-        cheap.cost = Some(Cost { total_cost_usd: Some(0.50) });
-        assert!(seg_model_cost(&env, &cheap, 0.0).contains("\x1b[32m"), "cheap → green");
+        cheap.cost = Some(Cost {
+            total_cost_usd: Some(0.50),
+        });
+        assert!(
+            seg_model_cost(&env, &cheap, 0.0).contains("\x1b[32m"),
+            "cheap → green"
+        );
 
         let mut warn = base();
-        warn.cost = Some(Cost { total_cost_usd: Some(3.00) });
-        assert!(seg_model_cost(&env, &warn, 0.0).contains("\x1b[33m"), "mid → yellow");
+        warn.cost = Some(Cost {
+            total_cost_usd: Some(3.00),
+        });
+        assert!(
+            seg_model_cost(&env, &warn, 0.0).contains("\x1b[33m"),
+            "mid → yellow"
+        );
 
         let mut hot = base();
-        hot.cost = Some(Cost { total_cost_usd: Some(7.00) });
-        assert!(seg_model_cost(&env, &hot, 0.0).contains("\x1b[31m"), "high → red");
+        hot.cost = Some(Cost {
+            total_cost_usd: Some(7.00),
+        });
+        assert!(
+            seg_model_cost(&env, &hot, 0.0).contains("\x1b[31m"),
+            "high → red"
+        );
     }
 
     #[test]
     fn no_color_strips_ansi() {
         let env = plain_env();
         let input = Input {
-            model: Some(Model { display_name: Some("claude-opus-4-7".into()), id: None }),
-            cost: Some(Cost { total_cost_usd: Some(0.10) }),
+            model: Some(Model {
+                display_name: Some("claude-opus-4-7".into()),
+                id: None,
+            }),
+            cost: Some(Cost {
+                total_cost_usd: Some(0.10),
+            }),
             cwd: Some("/tmp".into()),
             ..Default::default()
         };
@@ -719,16 +826,34 @@ mod tests {
     fn cache_key_changes_on_cost() {
         let env = plain_env();
         let cwd = PathBuf::from("/tmp");
-        let a = Input { cost: Some(Cost { total_cost_usd: Some(0.10) }), ..Default::default() };
-        let b = Input { cost: Some(Cost { total_cost_usd: Some(0.20) }), ..Default::default() };
-        assert_ne!(cache_key(&a, &cwd, &env, 0.0), cache_key(&b, &cwd, &env, 0.0));
+        let a = Input {
+            cost: Some(Cost {
+                total_cost_usd: Some(0.10),
+            }),
+            ..Default::default()
+        };
+        let b = Input {
+            cost: Some(Cost {
+                total_cost_usd: Some(0.20),
+            }),
+            ..Default::default()
+        };
+        assert_ne!(
+            cache_key(&a, &cwd, &env, 0.0),
+            cache_key(&b, &cwd, &env, 0.0)
+        );
     }
 
     #[test]
     fn cache_key_changes_on_baseline() {
         let env = plain_env();
         let cwd = PathBuf::from("/tmp");
-        let inp = Input { cost: Some(Cost { total_cost_usd: Some(1.00) }), ..Default::default() };
+        let inp = Input {
+            cost: Some(Cost {
+                total_cost_usd: Some(1.00),
+            }),
+            ..Default::default()
+        };
         assert_ne!(
             cache_key(&inp, &cwd, &env, 0.0),
             cache_key(&inp, &cwd, &env, 0.50),
@@ -740,19 +865,32 @@ mod tests {
     fn cost_baseline_subtracts_from_total() {
         let env = plain_env();
         let input = Input {
-            model: Some(Model { display_name: Some("claude-opus-4-7".into()), id: None }),
-            cost: Some(Cost { total_cost_usd: Some(1.20) }),
+            model: Some(Model {
+                display_name: Some("claude-opus-4-7".into()),
+                id: None,
+            }),
+            cost: Some(Cost {
+                total_cost_usd: Some(1.20),
+            }),
             ..Default::default()
         };
-        assert!(seg_model_cost(&env, &input, 1.00).contains("$0.20"), "1.20 - 1.00 = 0.20");
+        assert!(
+            seg_model_cost(&env, &input, 1.00).contains("$0.20"),
+            "1.20 - 1.00 = 0.20"
+        );
     }
 
     #[test]
     fn cost_baseline_clamps_at_zero() {
         let env = plain_env();
         let input = Input {
-            model: Some(Model { display_name: Some("claude-opus-4-7".into()), id: None }),
-            cost: Some(Cost { total_cost_usd: Some(0.50) }),
+            model: Some(Model {
+                display_name: Some("claude-opus-4-7".into()),
+                id: None,
+            }),
+            cost: Some(Cost {
+                total_cost_usd: Some(0.50),
+            }),
             ..Default::default()
         };
         // Baseline > total (shouldn't happen, but guard against negative display).
@@ -763,11 +901,14 @@ mod tests {
     fn cost_state_roundtrip() {
         let dir = tempfile::tempdir().unwrap();
         let p = cost_state_path(dir.path());
-        write_cost_state(&p, &CostState {
-            session_id: "sid-1".into(),
-            last_seen: 1.23,
-            baseline: 0.45,
-        });
+        write_cost_state(
+            &p,
+            &CostState {
+                session_id: "sid-1".into(),
+                last_seen: 1.23,
+                baseline: 0.45,
+            },
+        );
         let st = read_cost_state(&p).expect("state reads back");
         assert_eq!(st.session_id, "sid-1");
         assert!((st.last_seen - 1.23).abs() < 1e-9);
@@ -778,25 +919,37 @@ mod tests {
     fn sync_cost_state_keeps_baseline_same_session() {
         let dir = tempfile::tempdir().unwrap();
         // Seed prior state: session=sid-1 saw last 1.00 with baseline 0.30.
-        write_cost_state(&cost_state_path(dir.path()), &CostState {
-            session_id: "sid-1".into(),
-            last_seen: 1.00,
-            baseline: 0.30,
-        });
+        write_cost_state(
+            &cost_state_path(dir.path()),
+            &CostState {
+                session_id: "sid-1".into(),
+                last_seen: 1.00,
+                baseline: 0.30,
+            },
+        );
         let baseline = sync_cost_state(dir.path(), Some("sid-1"), 1.50);
-        assert!((baseline - 0.30).abs() < 1e-9, "same session → keep baseline");
+        assert!(
+            (baseline - 0.30).abs() < 1e-9,
+            "same session → keep baseline"
+        );
         let st = read_cost_state(&cost_state_path(dir.path())).unwrap();
-        assert!((st.last_seen - 1.50).abs() < 1e-9, "last_seen refreshes to 1.50");
+        assert!(
+            (st.last_seen - 1.50).abs() < 1e-9,
+            "last_seen refreshes to 1.50"
+        );
     }
 
     #[test]
     fn sync_cost_state_resets_on_new_session() {
         let dir = tempfile::tempdir().unwrap();
-        write_cost_state(&cost_state_path(dir.path()), &CostState {
-            session_id: "sid-old".into(),
-            last_seen: 5.00,
-            baseline: 2.00,
-        });
+        write_cost_state(
+            &cost_state_path(dir.path()),
+            &CostState {
+                session_id: "sid-old".into(),
+                last_seen: 5.00,
+                baseline: 2.00,
+            },
+        );
         let baseline = sync_cost_state(dir.path(), Some("sid-new"), 0.10);
         assert_eq!(baseline, 0.0, "new session → baseline resets to 0");
         let st = read_cost_state(&cost_state_path(dir.path())).unwrap();
@@ -809,7 +962,10 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let baseline = sync_cost_state(dir.path(), None, 1.00);
         assert_eq!(baseline, 0.0);
-        assert!(!cost_state_path(dir.path()).exists(), "no file written without sid");
+        assert!(
+            !cost_state_path(dir.path()).exists(),
+            "no file written without sid"
+        );
     }
 
     #[test]

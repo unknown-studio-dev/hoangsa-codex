@@ -56,7 +56,7 @@ use async_trait::async_trait;
 use fastembed::{EmbeddingModel, InitOptions, TextEmbedding};
 use hoangsa_memory_core::{Error, Result};
 use parking_lot::Mutex as PlMutex;
-use rusqlite::{params, Connection};
+use rusqlite::{Connection, params};
 use serde_json::Value;
 use tokio::sync::Mutex as TokioMutex;
 use tokio::sync::RwLock as TokioRwLock;
@@ -106,10 +106,7 @@ pub struct CollectionInfo {
 pub trait VectorStore: Send + Sync {
     /// Get or create a collection by name. Idempotent: calling twice
     /// with the same name returns handles to the same rows.
-    async fn ensure_collection(
-        &self,
-        name: &str,
-    ) -> Result<(Arc<dyn VectorCol>, CollectionInfo)>;
+    async fn ensure_collection(&self, name: &str) -> Result<(Arc<dyn VectorCol>, CollectionInfo)>;
 
     /// Cheap liveness check. Should return `Ok(true)` unless the
     /// embedder, the SQLite file, or both are known to be unusable.
@@ -582,10 +579,7 @@ impl EmbeddedVectorStore {
 
 #[async_trait]
 impl VectorStore for EmbeddedVectorStore {
-    async fn ensure_collection(
-        &self,
-        name: &str,
-    ) -> Result<(Arc<dyn VectorCol>, CollectionInfo)> {
+    async fn ensure_collection(&self, name: &str) -> Result<(Arc<dyn VectorCol>, CollectionInfo)> {
         let info = CollectionInfo {
             id: name.to_string(),
             name: name.to_string(),
@@ -640,10 +634,7 @@ impl VectorCol for EmbeddedVectorCol {
         }
 
         // e5 convention: tag stored documents as "passage: …".
-        let tagged: Vec<String> = documents
-            .iter()
-            .map(|d| format!("passage: {d}"))
-            .collect();
+        let tagged: Vec<String> = documents.iter().map(|d| format!("passage: {d}")).collect();
         let vectors = embed_texts(&self.inner, tagged).await?;
 
         if vectors.len() != n {
@@ -675,14 +666,8 @@ impl VectorCol for EmbeddedVectorCol {
                     let blob = vec_to_blob(&vectors[i]);
                     let meta_json = serde_json::to_string(&metadatas[i])
                         .map_err(|e| Error::Store(format!("serialise meta: {e}")))?;
-                    stmt.execute(params![
-                        collection,
-                        ids[i],
-                        blob,
-                        documents[i],
-                        meta_json,
-                    ])
-                    .map_err(|e| Error::Store(format!("upsert row: {e}")))?;
+                    stmt.execute(params![collection, ids[i], blob, documents[i], meta_json,])
+                        .map_err(|e| Error::Store(format!("upsert row: {e}")))?;
                 }
             }
             tx.commit()
@@ -832,9 +817,7 @@ impl VectorCol for EmbeddedVectorCol {
             // rows query_text would have.
             let matching_ids: Vec<String> = {
                 let mut stmt = db
-                    .prepare(
-                        "SELECT id, metadata FROM vec_chunks WHERE collection = ?1",
-                    )
+                    .prepare("SELECT id, metadata FROM vec_chunks WHERE collection = ?1")
                     .map_err(|e| Error::Store(format!("prepare delete_by_filter scan: {e}")))?;
                 let rows = stmt
                     .query_map(params![collection], |row| {
@@ -909,8 +892,8 @@ async fn embed_texts(inner: &Arc<StoreInner>, texts: Vec<String>) -> Result<Vec<
 }
 
 fn open_sqlite(path: &Path) -> Result<Connection> {
-    let conn = Connection::open(path)
-        .map_err(|e| Error::Store(format!("open vectors.sqlite: {e}")))?;
+    let conn =
+        Connection::open(path).map_err(|e| Error::Store(format!("open vectors.sqlite: {e}")))?;
     // `cache_size = -20000` caps the per-connection page cache at 20 MB
     // (negative = KiB). Default `-2000` (2 MB) is fine but undocumented;
     // setting it explicitly means RSS per project sqlite stays predictable
@@ -1197,9 +1180,7 @@ mod tests {
             now_unix() - 5, // 5 s ago
             Ordering::Relaxed,
         );
-        let evicted = embedder
-            .evict_if_stale(Duration::from_secs(30 * 60))
-            .await;
+        let evicted = embedder.evict_if_stale(Duration::from_secs(30 * 60)).await;
         assert!(
             !evicted,
             "stale eviction must wait for max_age to elapse; \

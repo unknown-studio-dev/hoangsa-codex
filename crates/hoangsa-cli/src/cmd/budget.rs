@@ -107,21 +107,23 @@ fn estimate_system_prompt_tokens(cwd: &str) -> u64 {
 
     let addon_tokens = if config_ok {
         if let Some(addons) = config.get("active_addons").and_then(|v| v.as_array()) {
-            let mut sorted_addons: Vec<&str> =
-                addons.iter().filter_map(|v| v.as_str()).collect();
+            let mut sorted_addons: Vec<&str> = addons.iter().filter_map(|v| v.as_str()).collect();
             sorted_addons.sort();
-            sorted_addons.iter().map(|addon_name| {
-                let local_addon = Path::new(cwd)
-                    .join(".claude/hoangsa/worker-rules/addons")
-                    .join(format!("{addon_name}.md"));
-                let global_addon = Path::new(&home_dir)
-                    .join(".claude/hoangsa/worker-rules/addons")
-                    .join(format!("{addon_name}.md"));
-                read_file(local_addon.to_str().unwrap_or(""))
-                    .or_else(|| read_file(global_addon.to_str().unwrap_or("")))
-                    .map(|c| count_tokens(&c))
-                    .unwrap_or(DEFAULT_OVERHEAD.addon_tokens_per_addon)
-            }).sum()
+            sorted_addons
+                .iter()
+                .map(|addon_name| {
+                    let local_addon = Path::new(cwd)
+                        .join(".claude/hoangsa/worker-rules/addons")
+                        .join(format!("{addon_name}.md"));
+                    let global_addon = Path::new(&home_dir)
+                        .join(".claude/hoangsa/worker-rules/addons")
+                        .join(format!("{addon_name}.md"));
+                    read_file(local_addon.to_str().unwrap_or(""))
+                        .or_else(|| read_file(global_addon.to_str().unwrap_or("")))
+                        .map(|c| count_tokens(&c))
+                        .unwrap_or(DEFAULT_OVERHEAD.addon_tokens_per_addon)
+                })
+                .sum()
         } else {
             0
         }
@@ -177,7 +179,8 @@ fn compute_breakdown(
         CacheScenario::Cold => system_prompt_tokens,
     };
 
-    let subtotal = work_tokens + system_prompt_effective + context_pack_tokens + tool_overhead_tokens;
+    let subtotal =
+        work_tokens + system_prompt_effective + context_pack_tokens + tool_overhead_tokens;
     let safety_margin_tokens = (subtotal as f64 * DEFAULT_OVERHEAD.safety_margin_pct) as u64;
     let base_total = subtotal + safety_margin_tokens;
 
@@ -218,15 +221,16 @@ fn resolve_plan_path(plan_path: Option<&str>, cwd: &str) -> String {
         if state_file.exists() {
             let state = read_json(state_file.to_str().unwrap_or(""));
             if state.get("error").is_none()
-                && let Some(session_id) = state.get("session_id").and_then(|v| v.as_str()) {
-                    let plan = Path::new(cwd)
-                        .join(".hoangsa/sessions")
-                        .join(session_id)
-                        .join("plan.json");
-                    if plan.exists() {
-                        return plan.to_string_lossy().to_string();
-                    }
+                && let Some(session_id) = state.get("session_id").and_then(|v| v.as_str())
+            {
+                let plan = Path::new(cwd)
+                    .join(".hoangsa/sessions")
+                    .join(session_id)
+                    .join("plan.json");
+                if plan.exists() {
+                    return plan.to_string_lossy().to_string();
                 }
+            }
         }
         Path::new(cwd)
             .join("plan.json")
@@ -500,7 +504,11 @@ mod tests {
             low: 1.0,
             medium: 1.0,
             high: 1.0,
-            sample_counts: CalibrationSamples { low: 0, medium: 0, high: 0 },
+            sample_counts: CalibrationSamples {
+                low: 0,
+                medium: 0,
+                high: 0,
+            },
         }
     }
 
@@ -561,7 +569,10 @@ mod tests {
         let breakdown = compute_breakdown("medium", "/tmp", 1000, CacheScenario::Cold, &no_cal());
 
         // Cold: system_prompt_effective = system_prompt_tokens
-        assert_eq!(breakdown.system_prompt_effective, breakdown.system_prompt_tokens);
+        assert_eq!(
+            breakdown.system_prompt_effective,
+            breakdown.system_prompt_tokens
+        );
         assert!(!breakdown.calibration_applied);
         assert_eq!(breakdown.calibration_factor, 1.0);
         assert!(breakdown.total > 0);
@@ -592,7 +603,11 @@ mod tests {
             low: 1.0,
             medium: 1.5,
             high: 1.0,
-            sample_counts: CalibrationSamples { low: 0, medium: 10, high: 0 },
+            sample_counts: CalibrationSamples {
+                low: 0,
+                medium: 10,
+                high: 0,
+            },
         };
         let breakdown = compute_breakdown("medium", "/tmp", 0, CacheScenario::Cold, &calibration);
         assert!(breakdown.calibration_applied);
@@ -605,7 +620,11 @@ mod tests {
             low: 2.0,
             medium: 1.0,
             high: 1.0,
-            sample_counts: CalibrationSamples { low: 3, medium: 0, high: 0 },
+            sample_counts: CalibrationSamples {
+                low: 3,
+                medium: 0,
+                high: 0,
+            },
         };
         let breakdown = compute_breakdown("low", "/tmp", 0, CacheScenario::Cold, &calibration);
         assert!(!breakdown.calibration_applied);
@@ -614,13 +633,19 @@ mod tests {
     #[test]
     fn test_budget_cache_scenario_for_task_cold_when_no_deps() {
         let task = serde_json::json!({ "id": "T-01", "depends_on": [] });
-        assert!(matches!(cache_scenario_for_task(&task), CacheScenario::Cold));
+        assert!(matches!(
+            cache_scenario_for_task(&task),
+            CacheScenario::Cold
+        ));
     }
 
     #[test]
     fn test_budget_cache_scenario_for_task_warm_when_has_deps() {
         let task = serde_json::json!({ "id": "T-02", "depends_on": ["T-01"] });
-        assert!(matches!(cache_scenario_for_task(&task), CacheScenario::Warm));
+        assert!(matches!(
+            cache_scenario_for_task(&task),
+            CacheScenario::Warm
+        ));
     }
 
     #[test]
@@ -662,16 +687,24 @@ mod tests {
             low: 1.0,
             medium: factor,
             high: 1.0,
-            sample_counts: CalibrationSamples { low: 0, medium: 5, high: 0 },
+            sample_counts: CalibrationSamples {
+                low: 0,
+                medium: 5,
+                high: 0,
+            },
         };
         let uncalibrated = CalibrationFactors {
             medium: factor,
             ..no_cal()
         };
         let with_cal = compute_breakdown("medium", "/tmp", 0, CacheScenario::Cold, &calibration);
-        let without_cal = compute_breakdown("medium", "/tmp", 0, CacheScenario::Cold, &uncalibrated);
+        let without_cal =
+            compute_breakdown("medium", "/tmp", 0, CacheScenario::Cold, &uncalibrated);
 
-        assert!(with_cal.calibration_applied, "should apply calibration when sample_count >= 5");
+        assert!(
+            with_cal.calibration_applied,
+            "should apply calibration when sample_count >= 5"
+        );
         assert_eq!(with_cal.calibration_factor, factor);
         // Total should be scaled by factor relative to uncalibrated base
         let expected_total = (without_cal.total as f64 * factor) as u64;
@@ -683,11 +716,18 @@ mod tests {
         // REQ-10: when sample_counts < 5, calibration_applied = false and total is unscaled
         let calibration = CalibrationFactors {
             high: 2.5, // would significantly change total if applied
-            sample_counts: CalibrationSamples { low: 0, medium: 0, high: 4 },
+            sample_counts: CalibrationSamples {
+                low: 0,
+                medium: 0,
+                high: 4,
+            },
             ..no_cal()
         };
         let breakdown = compute_breakdown("high", "/tmp", 0, CacheScenario::Cold, &calibration);
-        assert!(!breakdown.calibration_applied, "calibration_applied must be false when sample_count < 5");
+        assert!(
+            !breakdown.calibration_applied,
+            "calibration_applied must be false when sample_count < 5"
+        );
 
         // Verify the total is NOT scaled (base_total == total when not applied)
         let subtotal = breakdown.work_tokens
@@ -727,8 +767,7 @@ mod tests {
                 + bd.tool_overhead_tokens;
             let expected_margin = (subtotal as f64 * 0.15) as u64;
             assert_eq!(
-                bd.safety_margin_tokens,
-                expected_margin,
+                bd.safety_margin_tokens, expected_margin,
                 "safety margin for {} should be exactly 15% of subtotal",
                 complexity
             );

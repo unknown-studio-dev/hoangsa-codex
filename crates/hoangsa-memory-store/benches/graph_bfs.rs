@@ -23,8 +23,8 @@
 //! scenario the commit message called out as the motivating case.
 
 use criterion::{Criterion, criterion_group, criterion_main};
-use tempfile::TempDir;
 use hoangsa_memory_store::{BfsDir, EdgeRow, KvStore, NodeRow};
+use tempfile::TempDir;
 use tokio::runtime::Runtime;
 
 const BRANCHING: usize = 4;

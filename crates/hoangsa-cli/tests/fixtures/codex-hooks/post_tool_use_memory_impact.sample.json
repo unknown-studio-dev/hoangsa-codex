@@ -1,0 +1,8 @@
+{
+  "hook_event_name": "PostToolUse",
+  "tool_name": "mcp__hoangsa-memory__memory_impact",
+  "input": {
+    "fqn": "crate::module::target"
+  },
+  "cwd": "/repo"
+}

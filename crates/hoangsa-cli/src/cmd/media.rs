@@ -1,11 +1,11 @@
 use crate::helpers::out;
-use serde::{Deserialize, Serialize};
-use serde_json::json;
-use std::process::Command;
 use image::imageops::FilterType;
 use image::{Rgba, RgbaImage};
 use imageproc::drawing::draw_filled_rect_mut;
 use imageproc::rect::Rect;
+use serde::{Deserialize, Serialize};
+use serde_json::json;
+use std::process::Command;
 use walkdir::WalkDir;
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -83,11 +83,7 @@ pub fn detect_media_type(path: &str) -> &'static str {
 // ── Grid layout ───────────────────────────────────────────────────────────────
 
 pub fn calculate_grid(frame_count: u32) -> (u32, u32) {
-    let cols = if frame_count <= 12 {
-        4
-    } else {
-        5
-    };
+    let cols = if frame_count <= 12 { 4 } else { 5 };
     let rows = frame_count.div_ceil(cols);
     (cols, rows)
 }
@@ -109,33 +105,32 @@ pub fn cmd_check_ffmpeg() {
         .output();
 
     if let Ok(output) = system_result
-        && output.status.success() {
-            let ffmpeg_path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        && output.status.success()
+    {
+        let ffmpeg_path = String::from_utf8_lossy(&output.stdout).trim().to_string();
 
-            // Get version
-            let version_str = Command::new("ffmpeg")
-                .arg("-version")
-                .stdout(std::process::Stdio::piped())
-                .stderr(std::process::Stdio::piped())
-                .output()
-                .ok()
-                .and_then(|o| {
-                    String::from_utf8(o.stdout).ok().and_then(|s| {
-                        s.lines()
-                            .next()
-                            .map(|l| l.trim().to_string())
-                    })
-                })
-                .unwrap_or_default();
+        // Get version
+        let version_str = Command::new("ffmpeg")
+            .arg("-version")
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .output()
+            .ok()
+            .and_then(|o| {
+                String::from_utf8(o.stdout)
+                    .ok()
+                    .and_then(|s| s.lines().next().map(|l| l.trim().to_string()))
+            })
+            .unwrap_or_default();
 
-            out(&json!({
-                "available": true,
-                "path": ffmpeg_path,
-                "version": version_str,
-                "source": "system"
-            }));
-            return;
-        }
+        out(&json!({
+            "available": true,
+            "path": ffmpeg_path,
+            "version": version_str,
+            "source": "system"
+        }));
+        return;
+    }
 
     // Try npm ffmpeg-static
     let npm_result = Command::new("node")
@@ -145,18 +140,19 @@ pub fn cmd_check_ffmpeg() {
         .output();
 
     if let Ok(output) = npm_result
-        && output.status.success() {
-            let ffmpeg_path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            if !ffmpeg_path.is_empty() && ffmpeg_path != "null" {
-                out(&json!({
-                    "available": true,
-                    "path": ffmpeg_path,
-                    "version": "",
-                    "source": "ffmpeg-static"
-                }));
-                return;
-            }
+        && output.status.success()
+    {
+        let ffmpeg_path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if !ffmpeg_path.is_empty() && ffmpeg_path != "null" {
+            out(&json!({
+                "available": true,
+                "path": ffmpeg_path,
+                "version": "",
+                "source": "ffmpeg-static"
+            }));
+            return;
         }
+    }
 
     out(&json!({
         "available": false,
@@ -218,8 +214,10 @@ pub fn cmd_install_ffmpeg() {
 pub fn cmd_probe(path: &str) {
     let output = Command::new("ffprobe")
         .args([
-            "-v", "quiet",
-            "-print_format", "json",
+            "-v",
+            "quiet",
+            "-print_format",
+            "json",
             "-show_format",
             "-show_streams",
             path,
@@ -252,15 +250,13 @@ pub fn cmd_probe(path: &str) {
 
     // Extract video stream
     let streams = probe["streams"].as_array();
-    let video_stream = streams
-        .and_then(|arr| arr.iter().find(|s| s["codec_type"].as_str() == Some("video")));
+    let video_stream = streams.and_then(|arr| {
+        arr.iter()
+            .find(|s| s["codec_type"].as_str() == Some("video"))
+    });
 
-    let width = video_stream
-        .and_then(|s| s["width"].as_u64())
-        .unwrap_or(0) as u32;
-    let height = video_stream
-        .and_then(|s| s["height"].as_u64())
-        .unwrap_or(0) as u32;
+    let width = video_stream.and_then(|s| s["width"].as_u64()).unwrap_or(0) as u32;
+    let height = video_stream.and_then(|s| s["height"].as_u64()).unwrap_or(0) as u32;
     let codec = video_stream
         .and_then(|s| s["codec_name"].as_str())
         .unwrap_or("")
@@ -348,8 +344,10 @@ pub fn cmd_frames(args: &[String]) {
     let duration_secs = if interval_arg.is_none() {
         let probe_out = Command::new("ffprobe")
             .args([
-                "-v", "quiet",
-                "-print_format", "json",
+                "-v",
+                "quiet",
+                "-print_format",
+                "json",
                 "-show_format",
                 video_path.as_str(),
             ])
@@ -360,7 +358,11 @@ pub fn cmd_frames(args: &[String]) {
         probe_out
             .ok()
             .and_then(|o| serde_json::from_slice::<serde_json::Value>(&o.stdout).ok())
-            .and_then(|v| v["format"]["duration"].as_str().and_then(|d| d.parse::<f64>().ok()))
+            .and_then(|v| {
+                v["format"]["duration"]
+                    .as_str()
+                    .and_then(|d| d.parse::<f64>().ok())
+            })
             .unwrap_or(30.0)
     } else {
         0.0
@@ -384,8 +386,10 @@ pub fn cmd_frames(args: &[String]) {
 
     let result = Command::new("ffmpeg")
         .args([
-            "-i", video_path.as_str(),
-            "-vf", fps_filter.as_str(),
+            "-i",
+            video_path.as_str(),
+            "-vf",
+            fps_filter.as_str(),
             frame_pattern.as_str(),
         ])
         .stdout(std::process::Stdio::piped())
@@ -397,9 +401,11 @@ pub fn cmd_frames(args: &[String]) {
             // Count actual frames written
             let actual_count = std::fs::read_dir(&output_dir)
                 .ok()
-                .map(|rd| rd.filter_map(|e| e.ok()).filter(|e| {
-                    e.path().extension().and_then(|x| x.to_str()) == Some("png")
-                }).count() as u32)
+                .map(|rd| {
+                    rd.filter_map(|e| e.ok())
+                        .filter(|e| e.path().extension().and_then(|x| x.to_str()) == Some("png"))
+                        .count() as u32
+                })
                 .unwrap_or(frame_count);
             frame_count = actual_count;
 
@@ -517,9 +523,8 @@ pub fn cmd_montage(args: &[&str]) {
 
     // Try to load a font for timestamp text (optional, falls back to black bar only)
     let font_data: Option<Vec<u8>> = load_system_font();
-    let ab_font: Option<ab_glyph::FontVec> = font_data.and_then(|data| {
-        ab_glyph::FontVec::try_from_vec(data).ok()
-    });
+    let ab_font: Option<ab_glyph::FontVec> =
+        font_data.and_then(|data| ab_glyph::FontVec::try_from_vec(data).ok());
 
     // Composite each frame into the grid
     for (idx, frame_path) in frame_paths.iter().enumerate() {
@@ -537,7 +542,8 @@ pub fn cmd_montage(args: &[&str]) {
             Err(_) => continue,
         };
 
-        let resized_rgba = image::imageops::resize(&frame_img, CELL_W, cell_h, FilterType::Lanczos3);
+        let resized_rgba =
+            image::imageops::resize(&frame_img, CELL_W, cell_h, FilterType::Lanczos3);
 
         // Overlay frame onto canvas
         image::imageops::overlay(&mut canvas, &resized_rgba, x_off as i64, y_off as i64);
@@ -724,7 +730,11 @@ pub fn cmd_diff(args: &[&str]) {
             Ok(img) => img,
             Err(_) => {
                 // Use a blank gray image as placeholder
-                frames_rgba.push(RgbaImage::from_pixel(CELL_W, cell_h, Rgba([128u8, 128, 128, 255])));
+                frames_rgba.push(RgbaImage::from_pixel(
+                    CELL_W,
+                    cell_h,
+                    Rgba([128u8, 128, 128, 255]),
+                ));
                 continue;
             }
         };
@@ -876,9 +886,8 @@ pub(crate) fn compute_diff_overlay(a: &RgbaImage, b: &RgbaImage) -> RgbaImage {
             let g2 = pb[1];
             let b2 = pb[2];
 
-            let diff = (r1.abs_diff(r2) as u16
-                + g1.abs_diff(g2) as u16
-                + b1.abs_diff(b2) as u16) as u32;
+            let diff =
+                (r1.abs_diff(r2) as u16 + g1.abs_diff(g2) as u16 + b1.abs_diff(b2) as u16) as u32;
 
             let pixel = if diff > 30 {
                 // Changed: red tint overlay
@@ -906,12 +915,13 @@ pub(crate) fn compute_diff_overlay(a: &RgbaImage, b: &RgbaImage) -> RgbaImage {
 /// Falls back to frame_index as a whole number.
 fn extract_timestamp_from_path(path: &std::path::Path, frame_index: u32) -> f64 {
     // Try to parse digits from stem like "frame_0042" → 42
-    let stem = path
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or("");
+    let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
 
-    let digits: String = stem.chars().rev().take_while(|c| c.is_ascii_digit()).collect();
+    let digits: String = stem
+        .chars()
+        .rev()
+        .take_while(|c| c.is_ascii_digit())
+        .collect();
     let digits: String = digits.chars().rev().collect();
 
     if let Ok(n) = digits.parse::<u32>() {
@@ -1116,11 +1126,7 @@ mod tests {
         let output_path = test_dir.join("montage_out.png");
         let output_str = output_path.to_string_lossy().to_string();
 
-        cmd_montage(&[
-            frames_dir_str.as_str(),
-            "--output",
-            output_str.as_str(),
-        ]);
+        cmd_montage(&[frames_dir_str.as_str(), "--output", output_str.as_str()]);
 
         // Verify the montage file was created
         assert!(output_path.exists(), "montage output file was not created");

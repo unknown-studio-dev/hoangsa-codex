@@ -568,7 +568,6 @@ impl Candidate {
             preview: None,
         }
     }
-
 }
 
 struct FusedRow {
@@ -740,8 +739,8 @@ fn parse_chunk_id(id: &str) -> Option<(PathBuf, u32, u32)> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::PathBuf;
     use hoangsa_memory_core::QueryScope;
+    use std::path::PathBuf;
 
     #[test]
     fn parse_plain_chunk_id() {

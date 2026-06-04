@@ -1,13 +1,13 @@
 use axum::{
+    Json,
     extract::{Path, State},
     http::StatusCode,
     response::IntoResponse,
-    Json,
 };
 use hoangsa_cli::cmd::rule::Rule;
-use hoangsa_memory_core::projects::{discover_orphan_slugs, Registry};
+use hoangsa_memory_core::projects::{Registry, discover_orphan_slugs};
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -15,7 +15,7 @@ use crate::config;
 use crate::mcp_client::{self, McpError};
 use crate::memory;
 use crate::memory_files;
-use crate::patch::{self, PatchError, PatchRequest};
+use crate::patch::{self, ConfigTarget, PatchError, PatchRequest};
 use crate::rules::{self, RuleError};
 use crate::state::{AppState, ProjectContext};
 
@@ -75,10 +75,15 @@ pub struct LayerPatchBody {
     pub expected_mtime_ms: Option<i128>,
 }
 
-fn resolve_config_path(state: &AppState, layer: &str) -> Result<PathBuf, axum::response::Response> {
+fn resolve_config_target(
+    state: &AppState,
+    layer: &str,
+) -> Result<ConfigTarget, axum::response::Response> {
     match layer {
-        "global" => Ok(state.global_dir.join("config.json")),
-        "project" => Ok(state.current().project_dir.join(".hoangsa/config.json")),
+        "global" => ConfigTarget::global(&state.global_dir).map_err(patch_error_response),
+        "project" => {
+            ConfigTarget::project(&state.current().project_dir).map_err(patch_error_response)
+        }
         other => Err((
             StatusCode::BAD_REQUEST,
             Json(json!({ "error": format!("unknown layer: {other}") })),
@@ -91,7 +96,7 @@ pub async fn config_diff(
     State(state): State<Arc<AppState>>,
     Json(body): Json<LayerPatchBody>,
 ) -> impl IntoResponse {
-    let path = match resolve_config_path(&state, &body.layer) {
+    let target = match resolve_config_target(&state, &body.layer) {
         Ok(p) => p,
         Err(resp) => return resp,
     };
@@ -99,12 +104,12 @@ pub async fn config_diff(
         patch: body.patch,
         expected_mtime_ms: body.expected_mtime_ms,
     };
-    match patch::preview(&path, &req) {
+    match patch::preview(&target, &req) {
         Ok(out) => Json(json!({
             "before": out.before,
             "after": out.after,
             "mtime_ms": out.mtime_ms,
-            "path": path.display().to_string(),
+            "path": target.path().display().to_string(),
         }))
         .into_response(),
         Err(e) => patch_error_response(e),
@@ -115,7 +120,7 @@ pub async fn config_apply(
     State(state): State<Arc<AppState>>,
     Json(body): Json<LayerPatchBody>,
 ) -> impl IntoResponse {
-    let path = match resolve_config_path(&state, &body.layer) {
+    let target = match resolve_config_target(&state, &body.layer) {
         Ok(p) => p,
         Err(resp) => return resp,
     };
@@ -123,11 +128,11 @@ pub async fn config_apply(
         patch: body.patch,
         expected_mtime_ms: body.expected_mtime_ms,
     };
-    match patch::apply(&path, &req) {
+    match patch::apply(&target, &req) {
         Ok(out) => Json(json!({
             "after": out.after,
             "mtime_ms": out.mtime_ms,
-            "path": path.display().to_string(),
+            "path": target.path().display().to_string(),
         }))
         .into_response(),
         Err(e) => patch_error_response(e),
@@ -140,6 +145,7 @@ fn patch_error_response(err: PatchError) -> axum::response::Response {
         PatchError::InvalidPatch(_) | PatchError::PatchFailed(_) => {
             (StatusCode::BAD_REQUEST, err.to_string())
         }
+        PatchError::InvalidConfigPath(_) => (StatusCode::BAD_REQUEST, err.to_string()),
         PatchError::InvalidTarget(_) => (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
         PatchError::Io(_) => (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
     };
@@ -256,7 +262,11 @@ pub async fn rules_add(
     State(state): State<Arc<AppState>>,
     Json(body): Json<AddRuleBody>,
 ) -> impl IntoResponse {
-    match rules::add(&state.current().project_dir, body.rule, body.expected_mtime_ms) {
+    match rules::add(
+        &state.current().project_dir,
+        body.rule,
+        body.expected_mtime_ms,
+    ) {
         Ok(cfg) => rules_response(&state, json!({ "rules": cfg.rules })),
         Err(e) => rule_error(e),
     }
@@ -274,7 +284,12 @@ pub async fn rules_toggle(
     Path(id): Path<String>,
     Json(body): Json<ToggleBody>,
 ) -> impl IntoResponse {
-    match rules::set_enabled(&state.current().project_dir, &id, body.enabled, body.expected_mtime_ms) {
+    match rules::set_enabled(
+        &state.current().project_dir,
+        &id,
+        body.enabled,
+        body.expected_mtime_ms,
+    ) {
         Ok(cfg) => rules_response(&state, json!({ "rules": cfg.rules })),
         Err(e) => rule_error(e),
     }
@@ -309,7 +324,11 @@ pub async fn rules_replace(
     Path(_id): Path<String>,
     Json(body): Json<ReplaceBody>,
 ) -> impl IntoResponse {
-    match rules::replace(&state.current().project_dir, body.rule, body.expected_mtime_ms) {
+    match rules::replace(
+        &state.current().project_dir,
+        body.rule,
+        body.expected_mtime_ms,
+    ) {
         Ok(cfg) => rules_response(&state, json!({ "rules": cfg.rules })),
         Err(e) => rule_error(e),
     }
@@ -398,6 +417,56 @@ pub struct RegisterProjectBody {
     pub name: Option<String>,
 }
 
+fn canonical_project_dir(path: &std::path::Path) -> Result<PathBuf, axum::response::Response> {
+    let canonical = match path.canonicalize() {
+        Ok(p) => p,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(json!({ "error": format!("path does not exist: {}", path.display()) })),
+            )
+                .into_response());
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotADirectory => {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(json!({ "error": format!("path is not a directory: {}", path.display()) })),
+            )
+                .into_response());
+        }
+        Err(e) => {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(
+                    json!({ "error": format!("path is not accessible: {}: {e}", path.display()) }),
+                ),
+            )
+                .into_response());
+        }
+    };
+    match path.join(".hoangsa").canonicalize() {
+        Ok(_) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotADirectory => {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(json!({ "error": format!("path is not a directory: {}", path.display()) })),
+            )
+                .into_response());
+        }
+        Err(e) => {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(
+                    json!({ "error": format!("path is not accessible: {}: {e}", path.display()) }),
+                ),
+            )
+                .into_response());
+        }
+    }
+    Ok(canonical)
+}
+
 /// `POST /api/projects` — register a project by abs path. Idempotent
 /// upsert. Used by the UI when the user picks an orphan-slug folder or
 /// adds a new project from the file picker.
@@ -405,18 +474,15 @@ pub async fn projects_register(
     State(state): State<Arc<AppState>>,
     Json(body): Json<RegisterProjectBody>,
 ) -> impl IntoResponse {
-    if !body.path.exists() {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(json!({ "error": format!("path does not exist: {}", body.path.display()) })),
-        )
-            .into_response();
-    }
+    let path = match canonical_project_dir(&body.path) {
+        Ok(p) => p,
+        Err(resp) => return resp,
+    };
     let mut registry = match Registry::load(&state.global_dir) {
         Ok(r) => r,
         Err(e) => return registry_error(e.to_string()),
     };
-    let slug = registry.register(&body.path).slug.clone();
+    let slug = registry.register(&path).slug.clone();
     if let Some(n) = body.name {
         registry.rename(&slug, &n);
     }
@@ -452,14 +518,11 @@ pub async fn projects_switch(
     let resolved = match (body.slug.as_deref(), body.path.as_ref()) {
         (Some(slug), _) => registry.find(slug).cloned(),
         (None, Some(path)) => {
-            if !path.exists() {
-                return (
-                    StatusCode::BAD_REQUEST,
-                    Json(json!({ "error": format!("path does not exist: {}", path.display()) })),
-                )
-                    .into_response();
-            }
-            let slug = registry.register(path).slug.clone();
+            let path = match canonical_project_dir(path) {
+                Ok(p) => p,
+                Err(resp) => return resp,
+            };
+            let slug = registry.register(&path).slug.clone();
             if let Err(e) = registry.save(&state.global_dir) {
                 return registry_error(e.to_string());
             }
@@ -483,16 +546,23 @@ pub async fn projects_switch(
                 .into_response();
         }
     };
-    if !project.path.exists() {
-        return (
-            StatusCode::CONFLICT,
-            Json(json!({
-                "error": format!("registered path no longer exists: {}", project.path.display()),
-            })),
-        )
-            .into_response();
-    }
-    let mut ctx = ProjectContext::from_path(project.path.clone());
+    let canonical_path = match canonical_project_dir(&project.path) {
+        Ok(p) => p,
+        Err(resp) => {
+            return if resp.status() == StatusCode::BAD_REQUEST {
+                (
+                    StatusCode::CONFLICT,
+                    Json(json!({
+                        "error": format!("registered path is invalid: {}", project.path.display()),
+                    })),
+                )
+                    .into_response()
+            } else {
+                resp
+            };
+        }
+    };
+    let mut ctx = ProjectContext::from_path(canonical_path);
     ctx.name = project.name.clone();
     let prev = state.switch(ctx);
     // Bump last_used_at + persist.
@@ -526,9 +596,7 @@ pub async fn projects_remove(
         Err(e) => return registry_error(e.to_string()),
     };
     let removed = registry.remove(&slug);
-    if removed
-        && let Err(e) = registry.save(&state.global_dir)
-    {
+    if removed && let Err(e) = registry.save(&state.global_dir) {
         return registry_error(e.to_string());
     }
     Json(json!({ "slug": slug, "removed": removed })).into_response()
@@ -548,11 +616,7 @@ fn registry_error(msg: String) -> axum::response::Response {
 
 /// Forward a tool call to the daemon for the active project and shape
 /// the success / failure into a uniform Axum response.
-async fn call_tool(
-    state: &AppState,
-    tool: &str,
-    arguments: Value,
-) -> axum::response::Response {
+async fn call_tool(state: &AppState, tool: &str, arguments: Value) -> axum::response::Response {
     let current = state.current();
     let sock = memory::socket_for(&current.project_dir, &state.global_dir);
     match mcp_client::call_memory_tool(&sock, tool, arguments).await {

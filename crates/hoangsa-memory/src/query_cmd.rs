@@ -92,4 +92,3 @@ pub async fn run_query(
     print!("{}", out.render_with(&output_cfg.render_options()));
     Ok(())
 }
-

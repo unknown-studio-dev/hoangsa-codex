@@ -20,7 +20,7 @@ use hoangsa_memory_core::Synthesizer;
 use hoangsa_memory_core::projects::{Registry, default_hoangsa_home};
 use hoangsa_memory_retrieve::VectorStoreConfig;
 use hoangsa_memory_store::{
-    fastembed_cache_dir, prefetch_model, EmbeddedVectorStore, StoreRoot, VectorCol, VectorStore,
+    EmbeddedVectorStore, StoreRoot, VectorCol, VectorStore, fastembed_cache_dir, prefetch_model,
 };
 
 mod archive_cmd;
@@ -37,7 +37,11 @@ mod watch_cmd;
 // ------------------------------------------------------------------ CLI spec
 
 #[derive(Parser, Debug)]
-#[command(name = "hoangsa-memory", version, about = "Long-term memory for coding agents.")]
+#[command(
+    name = "hoangsa-memory",
+    version,
+    about = "Long-term memory for coding agents."
+)]
 struct Cli {
     /// Path to the `.hoangsa/memory/` data directory. Resolved via:
     /// `--root` > `$HOANGSA_MEMORY_ROOT` > `./.hoangsa/memory/` >
@@ -216,11 +220,9 @@ async fn main() -> anyhow::Result<()> {
     match cli.cmd {
         Cmd::Init => init_cmd::cmd_init(&root).await?,
         Cmd::Index { path } => index_cmd::run_index(&root, &path, cli.json).await?,
-        Cmd::Query {
-            text,
-            top_k,
-            synth,
-        } => query_cmd::run_query(&root, text.join(" "), top_k, cli.json, synth).await?,
+        Cmd::Query { text, top_k, synth } => {
+            query_cmd::run_query(&root, text.join(" "), top_k, cli.json, synth).await?
+        }
         Cmd::Watch { path, debounce_ms } => {
             watch_cmd::run_watch(&root, &path, std::time::Duration::from_millis(debounce_ms))
                 .await?
@@ -299,14 +301,8 @@ async fn main() -> anyhow::Result<()> {
                 all,
                 dry_run,
             } => {
-                archive_cmd::cmd_archive_purge(
-                    &root,
-                    older_than.as_deref(),
-                    all,
-                    dry_run,
-                    cli.json,
-                )
-                .await?
+                archive_cmd::cmd_archive_purge(&root, older_than.as_deref(), all, dry_run, cli.json)
+                    .await?
             }
         },
     }
@@ -318,8 +314,12 @@ async fn main() -> anyhow::Result<()> {
 /// `~/.hoangsa/projects.json`. Failures are logged at debug level and
 /// swallowed — registry write should never fail a normal CLI command.
 fn auto_register_cwd() {
-    let Ok(cwd) = std::env::current_dir() else { return };
-    let Ok(home) = default_hoangsa_home() else { return };
+    let Ok(cwd) = std::env::current_dir() else {
+        return;
+    };
+    let Ok(home) = default_hoangsa_home() else {
+        return;
+    };
     let mut registry = match Registry::load(&home) {
         Ok(r) => r,
         Err(e) => {
@@ -427,9 +427,7 @@ pub(crate) async fn acquire_store_lock(
             Ok(()) => return Ok(Some(file)),
             Err(_) => {
                 if !informed {
-                    eprintln!(
-                        "hoangsa-memory: another process is indexing this project; waiting…"
-                    );
+                    eprintln!("hoangsa-memory: another process is indexing this project; waiting…");
                     informed = true;
                 }
                 let now = tokio::time::Instant::now();
@@ -443,9 +441,7 @@ pub(crate) async fn acquire_store_lock(
     }
 }
 
-pub(crate) async fn open_vector_store(
-    store: &StoreRoot,
-) -> Option<Arc<dyn VectorCol>> {
+pub(crate) async fn open_vector_store(store: &StoreRoot) -> Option<Arc<dyn VectorCol>> {
     let cfg = VectorStoreConfig::load_or_default(&store.path).await;
     if !cfg.enabled {
         return None;
@@ -498,9 +494,8 @@ mod tests {
 
         let root = dir.path().to_path_buf();
         let started = Instant::now();
-        let waiter = tokio::spawn(async move {
-            acquire_store_lock(&root, Duration::from_secs(5)).await
-        });
+        let waiter =
+            tokio::spawn(async move { acquire_store_lock(&root, Duration::from_secs(5)).await });
 
         // Give the waiter a moment to enter the try_lock loop.
         tokio::time::sleep(Duration::from_millis(300)).await;

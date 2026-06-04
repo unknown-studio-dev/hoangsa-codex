@@ -85,10 +85,8 @@ impl RhaiRuntime {
         }
         for (path, tier) in to_load {
             if let Err(msg) = self.load_single(&path, tier) {
-                self.errors.push(format!(
-                    "[hsp] rhai load error: {}: {msg}",
-                    path.display()
-                ));
+                self.errors
+                    .push(format!("[hsp] rhai load error: {}: {msg}", path.display()));
             }
         }
     }
@@ -237,16 +235,22 @@ fn build_proxy_module() -> Module {
 
     let mut m = Module::new();
 
-    m.set_native_fn("lines", |s: &str| -> Result<rhai::Array, Box<EvalAltResult>> {
-        Ok(f::lines(s).into_iter().map(Dynamic::from).collect())
-    });
-    m.set_native_fn("join", |arr: rhai::Array| -> Result<String, Box<EvalAltResult>> {
-        let v: Vec<String> = arr
-            .into_iter()
-            .map(|d| d.into_string().unwrap_or_default())
-            .collect();
-        Ok(f::join(&v))
-    });
+    m.set_native_fn(
+        "lines",
+        |s: &str| -> Result<rhai::Array, Box<EvalAltResult>> {
+            Ok(f::lines(s).into_iter().map(Dynamic::from).collect())
+        },
+    );
+    m.set_native_fn(
+        "join",
+        |arr: rhai::Array| -> Result<String, Box<EvalAltResult>> {
+            let v: Vec<String> = arr
+                .into_iter()
+                .map(|d| d.into_string().unwrap_or_default())
+                .collect();
+            Ok(f::join(&v))
+        },
+    );
     m.set_native_fn(
         "head",
         |arr: rhai::Array, n: i64| -> Result<rhai::Array, Box<EvalAltResult>> {
@@ -313,7 +317,10 @@ fn build_proxy_module() -> Module {
                 .into_iter()
                 .map(|d| d.into_string().unwrap_or_default())
                 .collect();
-            Ok(f::grep_out(&v, pat).into_iter().map(Dynamic::from).collect())
+            Ok(f::grep_out(&v, pat)
+                .into_iter()
+                .map(Dynamic::from)
+                .collect())
         },
     );
     m.set_native_fn(
@@ -360,7 +367,10 @@ fn push_handler_from_spec(spec: Map) {
         .get("priority")
         .and_then(|d| d.as_int().ok())
         .unwrap_or(50) as i32;
-    let filter = match spec.get("filter").and_then(|d| d.clone().try_cast::<FnPtr>()) {
+    let filter = match spec
+        .get("filter")
+        .and_then(|d| d.clone().try_cast::<FnPtr>())
+    {
         Some(f) => f,
         None => return,
     };

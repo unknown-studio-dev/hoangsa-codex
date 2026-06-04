@@ -43,7 +43,11 @@ pub struct Check {
 
 impl Check {
     fn render(&self) -> String {
-        let mut line = format!("[hsp check] item={} status={}", self.item, self.status.as_str());
+        let mut line = format!(
+            "[hsp check] item={} status={}",
+            self.item,
+            self.status.as_str()
+        );
         for (k, v) in &self.fields {
             line.push(' ');
             line.push_str(k);
@@ -55,7 +59,9 @@ impl Check {
 }
 
 fn quote_if_needed(s: &str) -> String {
-    if s.chars().any(|c| c.is_whitespace() || c == '"' || c == '\'') {
+    if s.chars()
+        .any(|c| c.is_whitespace() || c == '"' || c == '\'')
+    {
         format!("'{}'", s.replace('\'', "\\'"))
     } else if s.is_empty() {
         "''".to_string()
@@ -213,7 +219,10 @@ fn check_hook_rewrite_works() -> Check {
         status,
         fields: vec![
             ("latency_ms".into(), format!("{}", elapsed.as_millis())),
-            ("exit".into(), format!("{}", output.status.code().unwrap_or(-1))),
+            (
+                "exit".into(),
+                format!("{}", output.status.code().unwrap_or(-1)),
+            ),
             ("response_valid_json".into(), parsed.is_ok().to_string()),
         ],
     }
@@ -239,7 +248,10 @@ fn check_config(cwd: &Path) -> Vec<Check> {
                     .map(|m| m.to_string())
                     .unwrap_or_else(|| "default".into()),
             ),
-            ("disabled_handlers_count".into(), prefs.disabled_handlers.len().to_string()),
+            (
+                "disabled_handlers_count".into(),
+                prefs.disabled_handlers.len().to_string(),
+            ),
             ("warnings_count".into(), prefs.warnings.len().to_string()),
         ],
     });
@@ -322,7 +334,11 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let c = check_hook(Scope::Project, tmp.path());
         assert_eq!(c.status, Status::Warn);
-        assert!(c.fields.iter().any(|(k, v)| k == "installed" && v == "false"));
+        assert!(
+            c.fields
+                .iter()
+                .any(|(k, v)| k == "installed" && v == "false")
+        );
     }
 
     #[test]
@@ -376,7 +392,14 @@ mod tests {
     fn run_emits_core_checks() {
         let tmp = TempDir::new().unwrap();
         let checks = run(tmp.path());
-        for expected in ["version", "platform", "binary_path", "hook_project", "config", "handlers"] {
+        for expected in [
+            "version",
+            "platform",
+            "binary_path",
+            "hook_project",
+            "config",
+            "handlers",
+        ] {
             assert!(
                 checks.iter().any(|c| c.item == expected),
                 "missing {expected} in checks: {checks:?}"

@@ -184,7 +184,11 @@ mod tests {
     #[test]
     fn parse_error_warns_not_fatal() {
         let tmp = TempDir::new().unwrap();
-        write(tmp.path(), ".hoangsa/proxy/config.toml", "not = valid = toml");
+        write(
+            tmp.path(),
+            ".hoangsa/proxy/config.toml",
+            "not = valid = toml",
+        );
         let p = Prefs::load(tmp.path(), Some(&tmp.path().join("nowhere.toml")));
         assert!(!p.strict);
         assert!(

@@ -69,7 +69,10 @@ function setup() {
 }
 "#;
     let evs = events_for("dyn.ts", src).await;
-    assert!(evs.is_empty(), "template-substitution topics must be skipped, got {evs:?}");
+    assert!(
+        evs.is_empty(),
+        "template-substitution topics must be skipped, got {evs:?}"
+    );
 }
 
 #[cfg(feature = "lang-typescript")]
@@ -113,9 +116,18 @@ function setup() {
 "#;
     let table = parse_src("const.ts", src).await;
     let consts: std::collections::HashMap<_, _> = table.string_consts.iter().cloned().collect();
-    assert_eq!(consts.get("TOPIC").map(String::as_str), Some("user.created"));
-    assert_eq!(consts.get("EVENTS.USER_CREATED").map(String::as_str), Some("user.created"));
-    assert_eq!(consts.get("EVENTS.DELETED").map(String::as_str), Some("user.deleted"));
+    assert_eq!(
+        consts.get("TOPIC").map(String::as_str),
+        Some("user.created")
+    );
+    assert_eq!(
+        consts.get("EVENTS.USER_CREATED").map(String::as_str),
+        Some("user.created")
+    );
+    assert_eq!(
+        consts.get("EVENTS.DELETED").map(String::as_str),
+        Some("user.deleted")
+    );
     let evs = to_captured(table.events);
     assert_eq!(evs.len(), 2);
     assert_eq!(evs[0].topic_expr.as_deref(), Some("TOPIC"));
@@ -147,8 +159,14 @@ function wire(em) {
 "#;
     let evs = events_for("ev.js", src).await;
     assert_eq!(evs.len(), 2);
-    let subs: Vec<_> = evs.iter().filter(|e| matches!(e.role, EventRole::Subscribe)).collect();
-    let pubs: Vec<_> = evs.iter().filter(|e| matches!(e.role, EventRole::Emit)).collect();
+    let subs: Vec<_> = evs
+        .iter()
+        .filter(|e| matches!(e.role, EventRole::Subscribe))
+        .collect();
+    let pubs: Vec<_> = evs
+        .iter()
+        .filter(|e| matches!(e.role, EventRole::Emit))
+        .collect();
     assert_eq!(subs.len(), 1);
     assert_eq!(pubs.len(), 1);
 }
@@ -176,7 +194,10 @@ def setup(bus, name):
     bus.publish(f"user.{name}.created", payload)
 "#;
     let evs = events_for("fstr.py", src).await;
-    assert!(evs.is_empty(), "f-string topics must be skipped, got {evs:?}");
+    assert!(
+        evs.is_empty(),
+        "f-string topics must be skipped, got {evs:?}"
+    );
 }
 
 #[cfg(feature = "lang-python")]
@@ -190,7 +211,10 @@ def setup(bus):
 "#;
     let table = parse_src("py_const.py", src).await;
     let consts: std::collections::HashMap<_, _> = table.string_consts.iter().cloned().collect();
-    assert_eq!(consts.get("TOPIC").map(String::as_str), Some("user.created"));
+    assert_eq!(
+        consts.get("TOPIC").map(String::as_str),
+        Some("user.created")
+    );
     let evs = to_captured(table.events);
     assert_eq!(evs.len(), 1);
     assert_eq!(evs[0].topic_expr.as_deref(), Some("TOPIC"));
@@ -263,7 +287,10 @@ def cached():
     pass
 "#;
     let evs = events_for("ndeco.py", src).await;
-    assert!(evs.is_empty(), "non-whitelisted decorators must be skipped, got {evs:?}");
+    assert!(
+        evs.is_empty(),
+        "non-whitelisted decorators must be skipped, got {evs:?}"
+    );
 }
 
 #[cfg(feature = "lang-typescript")]
@@ -280,8 +307,7 @@ class Handlers {
 "#;
     let evs = events_for("deco.ts", src).await;
     assert_eq!(evs.len(), 2, "got {evs:?}");
-    let topics: std::collections::HashSet<&str> =
-        evs.iter().map(|e| e.topic.as_str()).collect();
+    let topics: std::collections::HashSet<&str> = evs.iter().map(|e| e.topic.as_str()).collect();
     assert!(topics.contains("user.created"));
     assert!(topics.contains("user.deleted"));
     for e in &evs {
@@ -302,7 +328,10 @@ fn wire(tx: &Sender) {
 "#;
     let table = parse_src("rs_const.rs", src).await;
     let consts: std::collections::HashMap<_, _> = table.string_consts.iter().cloned().collect();
-    assert_eq!(consts.get("TOPIC").map(String::as_str), Some("user.created"));
+    assert_eq!(
+        consts.get("TOPIC").map(String::as_str),
+        Some("user.created")
+    );
     let evs = to_captured(table.events);
     assert_eq!(evs.len(), 1);
     assert_eq!(evs[0].topic_expr.as_deref(), Some("TOPIC"));

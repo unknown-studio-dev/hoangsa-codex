@@ -16,10 +16,10 @@
 //! is the file stem (e.g. `auth.rs` → `auth::sign_token`). We rely on that
 //! here to scope assertions per-symbol.
 
-use tempfile::tempdir;
 use hoangsa_memory_parse::LanguageRegistry;
 use hoangsa_memory_retrieve::Indexer;
 use hoangsa_memory_store::StoreRoot;
+use tempfile::tempdir;
 
 const V1: &str = r#"
 /// verify_token stub — early revision

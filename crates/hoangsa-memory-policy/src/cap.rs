@@ -9,9 +9,9 @@
 //! the MCP / CLI layers get a single uniform entrypoint for replace, remove,
 //! preview, preference append, and cap-enforced append.
 
-use std::path::Path;
 use hoangsa_memory_core::Result;
 use hoangsa_memory_store::markdown::MarkdownStore;
+use std::path::Path;
 
 use crate::text_sim;
 
@@ -424,8 +424,7 @@ async fn build_cap_error(
         cap_bytes,
         attempted_bytes,
         entries,
-        hint: "Call memory_replace or memory_remove to free space, then retry."
-            .to_string(),
+        hint: "Call memory_replace or memory_remove to free space, then retry.".to_string(),
     }
 }
 
@@ -866,8 +865,8 @@ impl MarkdownStoreMemoryExt for MarkdownStore {
 #[cfg(test)]
 mod cap_enforcement_tests {
     use super::*;
-    use tempfile::tempdir;
     use hoangsa_memory_core::{Fact, MemoryKind as CoreKind, MemoryMeta};
+    use tempfile::tempdir;
 
     fn fact(text: &str) -> Fact {
         Fact {

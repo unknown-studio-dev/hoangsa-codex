@@ -67,13 +67,7 @@ fn cli_flag_beats_config() {
     write_config(tmp.path(), "[runtime]\nstrict = false\n");
     let (_out, stderr, _) = run_in(
         tmp.path(),
-        &[
-            "run",
-            "--strict",
-            "sh",
-            "-c",
-            "printf '\\033[31mX\\033[0m'",
-        ],
+        &["run", "--strict", "sh", "-c", "printf '\\033[31mX\\033[0m'"],
     );
     let summary = stderr.lines().find(|l| l.starts_with("[hsp] ")).unwrap();
     assert!(summary.contains("strict=true"));

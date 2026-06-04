@@ -77,10 +77,7 @@ pub fn scan_available_addons(hoangsa_root: &str) -> Vec<Value> {
             .get("allowed_tools")
             .and_then(|f| serde_json::from_str(f).ok())
             .unwrap_or(json!([]));
-        let pre_invoke_gate = fm
-            .get("pre_invoke_gate")
-            .filter(|v| v != &"null")
-            .cloned();
+        let pre_invoke_gate = fm.get("pre_invoke_gate").filter(|v| v != &"null").cloned();
         // Task-type / worker-role gating (all default to empty arrays).
         // - exclude_task_types / exclude_worker_roles: skip addon when current
         //   task.type or worker_role appears in the list.
@@ -150,17 +147,10 @@ fn set_active_addons(project_dir: &str, addons: &[String]) -> bool {
     if let Some(codebase) = config.get_mut("codebase").and_then(|c| c.as_object_mut()) {
         codebase.insert("active_addons".to_string(), Value::Array(addons_val));
     } else if let Some(obj) = config.as_object_mut() {
-        obj.insert(
-            "codebase".to_string(),
-            json!({ "active_addons": addons }),
-        );
+        obj.insert("codebase".to_string(), json!({ "active_addons": addons }));
     }
 
-    fs::write(
-        &config_file,
-        serde_json::to_string_pretty(&config).unwrap(),
-    )
-    .is_ok()
+    fs::write(&config_file, serde_json::to_string_pretty(&config).unwrap()).is_ok()
 }
 
 /// Copy addon .md file from HOANGSA_ROOT to project-level .hoangsa/worker-rules/addons/.
@@ -246,7 +236,9 @@ pub fn cmd_list(project_dir: Option<&str>) {
     let hoangsa_root = match resolve_hoangsa_root(project_dir) {
         Some(r) => r,
         None => {
-            out(&json!({ "error": "Cannot find HOANGSA installation (no addons directory found)" }));
+            out(
+                &json!({ "error": "Cannot find HOANGSA installation (no addons directory found)" }),
+            );
             return;
         }
     };
@@ -259,9 +251,10 @@ pub fn cmd_list(project_dir: Option<&str>) {
         .map(|addon| {
             let name = addon["name"].as_str().unwrap_or("");
             let mut a = addon.clone();
-            a.as_object_mut()
-                .unwrap()
-                .insert("active".to_string(), Value::Bool(active.contains(&name.to_string())));
+            a.as_object_mut().unwrap().insert(
+                "active".to_string(),
+                Value::Bool(active.contains(&name.to_string())),
+            );
             a
         })
         .collect();
@@ -314,7 +307,9 @@ pub fn cmd_add(project_dir: Option<&str>, addons_json: Option<&str>) {
     // Validate all requested addons exist
     for name in &requested {
         if !available_names.contains(name) {
-            out(&json!({ "error": format!("Addon not found: {}. Available: {}", name, available_names.join(", ")) }));
+            out(
+                &json!({ "error": format!("Addon not found: {}. Available: {}", name, available_names.join(", ")) }),
+            );
             return;
         }
     }

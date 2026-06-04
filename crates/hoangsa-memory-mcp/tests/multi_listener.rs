@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use hoangsa_memory_core::projects::{Project, Registry};
 use hoangsa_memory_mcp::service::{
-    project_socket_path, run_multi_listener, ServiceState, populate_from_registry,
+    ServiceState, populate_from_registry, project_socket_path, run_multi_listener,
 };
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -103,7 +103,10 @@ async fn two_projects_have_isolated_state_via_distinct_sockets() {
         }),
     )
     .await;
-    assert_eq!(resp_a["result"]["isError"], false, "alpha write: {resp_a:?}");
+    assert_eq!(
+        resp_a["result"]["isError"], false,
+        "alpha write: {resp_a:?}"
+    );
 
     let resp_b = roundtrip(
         &beta_sock,

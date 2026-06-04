@@ -50,47 +50,37 @@ fn redirect_to_file_skips_rewrite() {
 
 #[test]
 fn append_redirect_skips() {
-    let (body, _) =
-        hook(r#"{"tool_name":"Bash","tool_input":{"command":"git log >> audit.log"}}"#);
+    let (body, _) = hook(r#"{"tool_name":"Bash","tool_input":{"command":"git log >> audit.log"}}"#);
     assert!(is_passthrough(&body), "got: {body}");
 }
 
 #[test]
 fn command_substitution_skips() {
-    let (body, _) = hook(
-        r#"{"tool_name":"Bash","tool_input":{"command":"echo $(git log -1)"}}"#,
-    );
+    let (body, _) = hook(r#"{"tool_name":"Bash","tool_input":{"command":"echo $(git log -1)"}}"#);
     assert!(is_passthrough(&body), "got: {body}");
 }
 
 #[test]
 fn backtick_substitution_skips() {
-    let (body, _) = hook(
-        r#"{"tool_name":"Bash","tool_input":{"command":"echo `git log -1`"}}"#,
-    );
+    let (body, _) = hook(r#"{"tool_name":"Bash","tool_input":{"command":"echo `git log -1`"}}"#);
     assert!(is_passthrough(&body), "got: {body}");
 }
 
 #[test]
 fn and_chain_skips() {
-    let (body, _) = hook(
-        r#"{"tool_name":"Bash","tool_input":{"command":"cd foo && git log"}}"#,
-    );
+    let (body, _) = hook(r#"{"tool_name":"Bash","tool_input":{"command":"cd foo && git log"}}"#);
     assert!(is_passthrough(&body), "got: {body}");
 }
 
 #[test]
 fn semicolon_chain_skips() {
-    let (body, _) = hook(
-        r#"{"tool_name":"Bash","tool_input":{"command":"git status; git log"}}"#,
-    );
+    let (body, _) = hook(r#"{"tool_name":"Bash","tool_input":{"command":"git status; git log"}}"#);
     assert!(is_passthrough(&body), "got: {body}");
 }
 
 #[test]
 fn background_skips() {
-    let (body, _) =
-        hook(r#"{"tool_name":"Bash","tool_input":{"command":"git log &"}}"#);
+    let (body, _) = hook(r#"{"tool_name":"Bash","tool_input":{"command":"git log &"}}"#);
     assert!(is_passthrough(&body), "got: {body}");
 }
 
@@ -98,9 +88,8 @@ fn background_skips() {
 fn quoted_pipe_inside_arg_still_rewrites() {
     // `grep "hi | there" file` — pipe is inside a double-quoted pattern,
     // not a shell operator. We SHOULD still rewrite.
-    let (body, _) = hook(
-        r#"{"tool_name":"Bash","tool_input":{"command":"grep \"hi | there\" x.txt"}}"#,
-    );
+    let (body, _) =
+        hook(r#"{"tool_name":"Bash","tool_input":{"command":"grep \"hi | there\" x.txt"}}"#);
     assert!(
         !is_passthrough(&body),
         "quoted pipe must not block rewrite, got: {body}"
@@ -113,9 +102,7 @@ fn quoted_pipe_inside_arg_still_rewrites() {
 
 #[test]
 fn single_quoted_pipe_still_rewrites() {
-    let (body, _) = hook(
-        r#"{"tool_name":"Bash","tool_input":{"command":"grep 'foo|bar' x.txt"}}"#,
-    );
+    let (body, _) = hook(r#"{"tool_name":"Bash","tool_input":{"command":"grep 'foo|bar' x.txt"}}"#);
     assert!(!is_passthrough(&body), "got: {body}");
 }
 
@@ -124,9 +111,7 @@ fn escaped_pipe_still_rewrites() {
     // `git log \| cat` — escaped pipe is semantically two args to git, no
     // subshell. This is a pathological case; current impl treats ESC then
     // the pipe byte as an escape pair, so `|` is skipped → rewrite fires.
-    let (body, _) = hook(
-        r#"{"tool_name":"Bash","tool_input":{"command":"git log \\| cat"}}"#,
-    );
+    let (body, _) = hook(r#"{"tool_name":"Bash","tool_input":{"command":"git log \\| cat"}}"#);
     assert!(!is_passthrough(&body), "got: {body}");
 }
 

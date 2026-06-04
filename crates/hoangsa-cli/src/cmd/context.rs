@@ -5,17 +5,20 @@ use std::path::Path;
 
 /// Extract lines from `content` using `selective` mode and an optional line range.
 /// Returns `(text, start_line, end_line)`.
-fn extract_lines(content: String, selective: bool, line_range: Option<(usize, usize)>) -> (String, usize, usize) {
-    if selective
-        && let Some((start, end)) = line_range {
-            let selected: Vec<&str> = content
-                .lines()
-                .skip(start.saturating_sub(1))
-                .take(end.saturating_sub(start.saturating_sub(1)))
-                .collect();
-            let actual_end = start.saturating_sub(1) + selected.len();
-            return (selected.join("\n"), start, actual_end);
-        }
+fn extract_lines(
+    content: String,
+    selective: bool,
+    line_range: Option<(usize, usize)>,
+) -> (String, usize, usize) {
+    if selective && let Some((start, end)) = line_range {
+        let selected: Vec<&str> = content
+            .lines()
+            .skip(start.saturating_sub(1))
+            .take(end.saturating_sub(start.saturating_sub(1)))
+            .collect();
+        let actual_end = start.saturating_sub(1) + selected.len();
+        return (selected.join("\n"), start, actual_end);
+    }
     let line_count = content.lines().count();
     (content, 1, line_count)
 }
@@ -33,9 +36,11 @@ fn parse_file_spec(spec: &str) -> (&str, Option<(usize, usize)>) {
             let start_str = &suffix[..dash_pos];
             let end_str = &suffix[dash_pos + 1..];
             if let (Ok(start), Ok(end)) = (start_str.parse::<usize>(), end_str.parse::<usize>())
-                && start > 0 && end >= start {
-                    return (&spec[..colon_pos], Some((start, end)));
-                }
+                && start > 0
+                && end >= start
+            {
+                return (&spec[..colon_pos], Some((start, end)));
+            }
         }
     }
     (spec, None)
@@ -164,15 +169,17 @@ fn build_context_pack(session_dir: &str, task_id: &str) -> Result<Value, Value> 
                     workspace_canonical.join(file_path)
                 };
                 if full_path.exists()
-                    && let Ok(content) = fs::read_to_string(&full_path) {
-                        let (lines, start_line, end_line) = extract_lines(content, selective, line_range);
-                        context_pointer_segments.push(json!({
-                            "path": file_path,
-                            "lines": lines,
-                            "start_line": start_line,
-                            "end_line": end_line,
-                        }));
-                    }
+                    && let Ok(content) = fs::read_to_string(&full_path)
+                {
+                    let (lines, start_line, end_line) =
+                        extract_lines(content, selective, line_range);
+                    context_pointer_segments.push(json!({
+                        "path": file_path,
+                        "lines": lines,
+                        "start_line": start_line,
+                        "end_line": end_line,
+                    }));
+                }
             }
         }
     }

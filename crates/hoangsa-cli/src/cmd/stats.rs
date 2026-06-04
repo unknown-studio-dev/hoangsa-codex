@@ -1,6 +1,6 @@
 use crate::helpers::out;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::fs;
 use std::io::{BufRead, BufReader, Write as IoWrite};
 use std::path::Path;
@@ -412,7 +412,10 @@ mod tests {
             (result.medium - 1.2).abs() < 0.01,
             "medium factor should be ~1.2"
         );
-        assert!((result.high - 1.4).abs() < 0.01, "high factor should be ~1.4");
+        assert!(
+            (result.high - 1.4).abs() < 0.01,
+            "high factor should be ~1.4"
+        );
         assert_eq!(result.sample_counts.low, 1);
         assert_eq!(result.sample_counts.medium, 1);
         assert_eq!(result.sample_counts.high, 1);
@@ -510,21 +513,30 @@ mod tests {
         let dir = make_temp_dir("record_creates_dir");
         // Ensure the stats dir does NOT exist before the call
         let expected_stats_dir = dir.join(".hoangsa").join("stats");
-        assert!(!expected_stats_dir.exists(), "stats dir must not exist before test");
+        assert!(
+            !expected_stats_dir.exists(),
+            "stats dir must not exist before test"
+        );
 
         // cmd_record uses current_workspace() so we must change cwd
         let original_dir = std::env::current_dir().expect("get cwd");
         std::env::set_current_dir(&dir).expect("set cwd to temp dir");
 
-        let record_json = serde_json::to_string(&sample_record("low", 10000, 9000))
-            .expect("serialize record");
+        let record_json =
+            serde_json::to_string(&sample_record("low", 10000, 9000)).expect("serialize record");
         cmd_record(Some(&record_json));
 
         std::env::set_current_dir(&original_dir).expect("restore cwd");
 
         let expected_file = expected_stats_dir.join("token-usage.jsonl");
-        assert!(expected_stats_dir.exists(), ".hoangsa/stats/ directory should have been created");
-        assert!(expected_file.exists(), "token-usage.jsonl should have been created");
+        assert!(
+            expected_stats_dir.exists(),
+            ".hoangsa/stats/ directory should have been created"
+        );
+        assert!(
+            expected_file.exists(),
+            "token-usage.jsonl should have been created"
+        );
 
         cleanup(&dir);
     }
@@ -541,7 +553,11 @@ mod tests {
 
         let records = load_records(dir.to_str().expect("path str"));
         cleanup(&dir);
-        assert_eq!(records.len(), 2, "both records must be present after two appends");
+        assert_eq!(
+            records.len(),
+            2,
+            "both records must be present after two appends"
+        );
         assert_eq!(records[0].complexity, "low");
         assert_eq!(records[1].complexity, "high");
     }
@@ -570,8 +586,14 @@ mod tests {
         let skip = all.len().saturating_sub(last_n);
         let last_two: Vec<&TaskUsageRecord> = all.iter().skip(skip).collect();
         assert_eq!(last_two.len(), 2, "--last 2 should yield exactly 2 records");
-        assert_eq!(last_two[0].tracked_usage, 11000, "4th record should be first of last 2");
-        assert_eq!(last_two[1].tracked_usage, 12000, "5th record should be second of last 2");
+        assert_eq!(
+            last_two[0].tracked_usage, 11000,
+            "4th record should be first of last 2"
+        );
+        assert_eq!(
+            last_two[1].tracked_usage, 12000,
+            "5th record should be second of last 2"
+        );
 
         cleanup(&dir);
     }
@@ -599,7 +621,10 @@ mod tests {
 
         assert_eq!(medium_only.len(), 2, "should find exactly 2 medium records");
         for r in &medium_only {
-            assert_eq!(r.complexity, "medium", "all filtered records must be medium complexity");
+            assert_eq!(
+                r.complexity, "medium",
+                "all filtered records must be medium complexity"
+            );
         }
 
         let low_only: Vec<&TaskUsageRecord> = all
@@ -626,7 +651,10 @@ mod tests {
             "calibration factor {} must be capped at 3.0",
             result.medium
         );
-        assert_eq!(result.medium, 3.0, "both ratios exceed cap, average should be exactly 3.0");
+        assert_eq!(
+            result.medium, 3.0,
+            "both ratios exceed cap, average should be exactly 3.0"
+        );
         assert_eq!(result.sample_counts.medium, 2);
         // low and high with no records should default to 1.0
         assert_eq!(result.low, 1.0);

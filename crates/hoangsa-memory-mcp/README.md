@@ -79,6 +79,7 @@ Install with:
 ```sh
 hoangsa-cli install --target codex --global
 hoangsa-cli install --target codex --local
+hoangsa-cli install --target codex --local --codex-memory-root "$PWD/.hoangsa/memory"
 ```
 
 For Codex Desktop/App plugin testing, this repo also contains
@@ -86,8 +87,9 @@ For Codex Desktop/App plugin testing, this repo also contains
 `.mcp.json` and the Codex-safe memory skills.
 
 Avoid setting global `HOANGSA_MEMORY_ROOT`; project memory should resolve
-from the Codex session working directory. The server also returns concise
-memory-use guidance in its MCP `initialize` response.
+from the Codex session working directory. Use `--codex-memory-root` only
+for a project-local override. The server also returns concise memory-use
+guidance in its MCP `initialize` response.
 
 **Build from source:**
 
