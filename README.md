@@ -133,7 +133,8 @@ setup.
 
 Codex support uses Codex-native files instead of writing Claude-only
 surfaces. It does not install Claude slash commands or Claude agent
-templates.
+templates. Codex workflow commands are installed as skills, with optional
+custom-prompt shortcuts for the Codex slash menu.
 
 ```sh
 hoangsa-cli install --target codex --global
@@ -163,9 +164,35 @@ After installing, start Codex in the project and run `/mcp` to confirm
 that `hoangsa-memory` tools are listed.
 
 The installer also routes memory skills to `.agents/skills/hoangsa/`,
+installs Codex-native command workflow skills such as `$hoangsa-menu`,
 syncs Hoangsa guidance into `AGENTS.md`, and writes conservative Codex
-hook entries under `.codex/hooks.json`. `hsp` shell-output rewriting is
-not enabled for Codex unless explicitly opted in by a later release.
+hook entries under `.codex/hooks.json`. Global Codex installs also write
+managed prompt shortcuts into `~/.codex/prompts/`, which Codex exposes as
+`/prompts:hoangsa-menu` style slash-menu entries. `hsp` shell-output
+rewriting is not enabled for Codex unless explicitly opted in by a later
+release.
+
+Codex command examples:
+
+```text
+$hoangsa-menu
+use hoangsa menu
+/prompts:hoangsa-menu
+```
+
+Claude Code keeps the original command shape:
+
+```text
+/hoangsa:menu
+```
+
+The Codex command player can also be used directly:
+
+```sh
+hoangsa-cli codex commands --json
+hoangsa-cli codex render menu --arguments "design the billing screen"
+hoangsa-cli codex install-prompts --global
+```
 
 ### Codex plugin package
 
@@ -177,9 +204,10 @@ plugins/hoangsa-codex/
 .agents/plugins/marketplace.json
 ```
 
-The plugin packages the Codex-safe memory skills and a `hoangsa-memory`
-MCP server entry. The MCP command expects `hoangsa-memory-mcp` to be on
-`PATH`, usually from the release installer or a source build.
+The plugin packages the Codex-safe memory skills, Codex-native Hoangsa
+command workflow skills, and a `hoangsa-memory` MCP server entry. The
+MCP command expects `hoangsa-memory-mcp` to be on `PATH`, usually from
+the release installer or a source build.
 
 To test the repo-local marketplace:
 
