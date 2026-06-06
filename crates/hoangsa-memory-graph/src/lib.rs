@@ -22,9 +22,9 @@
 use std::collections::HashSet;
 use std::path::PathBuf;
 
-use serde::{Deserialize, Serialize};
 use hoangsa_memory_core::Result;
 use hoangsa_memory_store::{BfsDir, EdgeRow, KvStore, NodeRow};
+use serde::{Deserialize, Serialize};
 
 /// A node in the code graph.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

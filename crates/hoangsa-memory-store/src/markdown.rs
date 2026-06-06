@@ -58,10 +58,10 @@
 
 use std::path::{Path, PathBuf};
 
-use serde::{Deserialize, Serialize};
 use hoangsa_memory_core::{
     Enforcement, Fact, FactScope, Lesson, MemoryKind, MemoryMeta, Preference, Result, Skill,
 };
+use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 use tokio::io::AsyncWriteExt;
 
@@ -333,8 +333,7 @@ impl MarkdownStore {
         if needles.is_empty() {
             return Ok(Vec::new());
         }
-        let lowered: Vec<String> =
-            needles.iter().map(|n| n.as_ref().to_lowercase()).collect();
+        let lowered: Vec<String> = needles.iter().map(|n| n.as_ref().to_lowercase()).collect();
         let all = self.read_preferences().await?;
         Ok(all
             .into_iter()
@@ -1250,8 +1249,8 @@ mod rotation_tests {
 #[cfg(test)]
 mod single_pass_grep_tests {
     use super::*;
-    use tempfile::TempDir;
     use hoangsa_memory_core::{Fact, Lesson, MemoryKind, MemoryMeta};
+    use tempfile::TempDir;
 
     async fn open_store() -> (TempDir, MarkdownStore) {
         let dir = tempfile::tempdir().unwrap();
@@ -1488,7 +1487,10 @@ tags: git
         assert_eq!(hits[0].tags, vec!["node"]);
 
         // Miss
-        let hits = store.grep_preferences_multi(&["nonexistent"]).await.unwrap();
+        let hits = store
+            .grep_preferences_multi(&["nonexistent"])
+            .await
+            .unwrap();
         assert!(hits.is_empty());
 
         // Empty needles → empty result (not all preferences).
@@ -1501,8 +1503,8 @@ tags: git
 #[cfg(test)]
 mod scope_tests {
     use super::*;
-    use tempfile::TempDir;
     use hoangsa_memory_core::{Fact, FactScope, MemoryKind, MemoryMeta};
+    use tempfile::TempDir;
 
     async fn open_store() -> (TempDir, MarkdownStore) {
         let dir = tempfile::tempdir().unwrap();
@@ -1603,8 +1605,8 @@ mod scope_tests {
 #[cfg(test)]
 mod trigger_render {
     use super::*;
-    use tempfile::TempDir;
     use hoangsa_memory_core::{Enforcement, Lesson, MemoryKind, MemoryMeta};
+    use tempfile::TempDir;
 
     async fn open_store() -> (TempDir, MarkdownStore) {
         let dir = tempfile::tempdir().unwrap();

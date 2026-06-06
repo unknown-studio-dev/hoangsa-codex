@@ -1,7 +1,6 @@
 use axum::{
-    middleware,
+    Router, middleware,
     routing::{get, post},
-    Router,
 };
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -102,7 +101,10 @@ async fn shutdown_signal() {
     let _ = tokio::signal::ctrl_c().await;
 }
 
-fn register_project(global_dir: &std::path::Path, project_dir: &std::path::Path) -> anyhow::Result<()> {
+fn register_project(
+    global_dir: &std::path::Path,
+    project_dir: &std::path::Path,
+) -> anyhow::Result<()> {
     use hoangsa_memory_core::projects::Registry;
     let mut registry = Registry::load(global_dir)?;
     registry.register(project_dir);

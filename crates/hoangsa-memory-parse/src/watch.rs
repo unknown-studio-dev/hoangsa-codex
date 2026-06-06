@@ -14,9 +14,9 @@
 
 use std::path::Path;
 
+use hoangsa_memory_core::{Error, Event, Result};
 use ignore::gitignore::{Gitignore, GitignoreBuilder};
 use notify::{EventKind, RecommendedWatcher, RecursiveMode, Watcher as _};
-use hoangsa_memory_core::{Error, Event, Result};
 use time::OffsetDateTime;
 use tokio::sync::mpsc;
 use tracing::{debug, warn};

@@ -78,7 +78,10 @@ fn strict_grep_avoids_xn_annotation() {
     // dedupe (keep one instance, no suffix).
     let input = "a\na\na\nb\nc\nc\n";
     let out = run("grep", None, &[], input, true).stdout.expect("dedupe");
-    assert!(!out.contains("(x"), "strict must not annotate, got: {out:?}");
+    assert!(
+        !out.contains("(x"),
+        "strict must not annotate, got: {out:?}"
+    );
     assert!(out.lines().count() == 3, "got: {out:?}");
     assert_eq!(out, "a\nb\nc\n");
 }
@@ -86,7 +89,9 @@ fn strict_grep_avoids_xn_annotation() {
 #[test]
 fn default_grep_still_annotates() {
     let input = "a\na\na\nb\n";
-    let out = run("grep", None, &[], input, false).stdout.expect("collapse");
+    let out = run("grep", None, &[], input, false)
+        .stdout
+        .expect("collapse");
     assert!(out.contains("(x3)"));
 }
 
@@ -94,7 +99,10 @@ fn default_grep_still_annotates() {
 fn strict_grep_big_output_no_sandwich() {
     // 500 lines, no dups → default sandwiches to ~260, strict keeps all 500.
     let out = run("grep", None, &[], &big(500), true);
-    assert!(out.stdout.is_none(), "strict must passthrough when no dedupe");
+    assert!(
+        out.stdout.is_none(),
+        "strict must passthrough when no dedupe"
+    );
 }
 
 #[test]

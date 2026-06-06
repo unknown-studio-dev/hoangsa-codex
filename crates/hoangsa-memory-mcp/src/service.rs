@@ -135,17 +135,15 @@ impl ServiceState {
     /// running without a watcher; restart picks it up. This trade keeps the
     /// `OnceCell<Arc<Server>>` cache stable across reconciles.
     pub fn register(&self, slug: String, memory_root: PathBuf, source_path: Option<PathBuf>) {
-        self.projects
-            .entry(slug.clone())
-            .or_insert_with(|| {
-                Arc::new(ProjectSlot {
-                    slug,
-                    memory_root,
-                    source_path,
-                    server: OnceCell::new(),
-                    listener: std::sync::Mutex::new(None),
-                })
-            });
+        self.projects.entry(slug.clone()).or_insert_with(|| {
+            Arc::new(ProjectSlot {
+                slug,
+                memory_root,
+                source_path,
+                server: OnceCell::new(),
+                listener: std::sync::Mutex::new(None),
+            })
+        });
     }
 
     /// Remove a slug from the daemon: abort its listener + watcher,
@@ -706,10 +704,7 @@ mod tests {
         // long-lived borrow would deadlock the rebuild.
         let b1_id = Arc::as_ptr(&server.resources().await.unwrap());
         assert!(server.evict_resources().await, "first evict drops bundle");
-        assert!(
-            !server.evict_resources().await,
-            "second evict is a no-op"
-        );
+        assert!(!server.evict_resources().await, "second evict is a no-op");
         let b2 = server.resources().await.unwrap();
         assert!(
             !std::ptr::eq(b1_id, Arc::as_ptr(&b2)),
@@ -734,10 +729,7 @@ mod tests {
         assert!(state.slugs().contains(&"alpha".to_string()));
         assert!(state.unregister("alpha"), "first unregister reports work");
         assert!(state.slugs().is_empty(), "slot removed from DashMap");
-        assert!(
-            !state.unregister("alpha"),
-            "second unregister is a no-op",
-        );
+        assert!(!state.unregister("alpha"), "second unregister is a no-op",);
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -789,7 +781,10 @@ mod tests {
             .get_vector_store()
             .await
             .expect("vector store should open with default config");
-        assert!(server.vector_store_is_warm().await, "warm-up populated the slot");
+        assert!(
+            server.vector_store_is_warm().await,
+            "warm-up populated the slot"
+        );
 
         assert!(server.evict_resources().await, "first evict reports work");
         assert!(

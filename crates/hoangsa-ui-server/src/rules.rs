@@ -4,7 +4,7 @@
 //! the CLI never drift on the rule schema. Writes go through this module's
 //! atomic write so concurrent edits from the CLI are detected via mtime.
 
-use hoangsa_cli::cmd::rule::{default_rules, read_rules_config_pub, Rule, RulesConfig};
+use hoangsa_cli::cmd::rule::{Rule, RulesConfig, default_rules, read_rules_config_pub};
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -64,7 +64,9 @@ fn load_or_init(project_dir: &Path) -> Result<RulesConfig, RuleError> {
 }
 
 fn check_mtime(path: &Path, expected: Option<i128>) -> Result<(), RuleError> {
-    let Some(expected) = expected else { return Ok(()) };
+    let Some(expected) = expected else {
+        return Ok(());
+    };
     let actual = mtime_ms(path).unwrap_or(0);
     if expected != actual {
         return Err(RuleError::Conflict);
@@ -72,7 +74,11 @@ fn check_mtime(path: &Path, expected: Option<i128>) -> Result<(), RuleError> {
     Ok(())
 }
 
-pub fn add(project_dir: &Path, rule: Rule, expected_mtime: Option<i128>) -> Result<RulesConfig, RuleError> {
+pub fn add(
+    project_dir: &Path,
+    rule: Rule,
+    expected_mtime: Option<i128>,
+) -> Result<RulesConfig, RuleError> {
     let path = rules_path(project_dir);
     check_mtime(&path, expected_mtime)?;
     let mut config = load_or_init(project_dir)?;
@@ -84,7 +90,11 @@ pub fn add(project_dir: &Path, rule: Rule, expected_mtime: Option<i128>) -> Resu
     Ok(config)
 }
 
-pub fn remove(project_dir: &Path, rule_id: &str, expected_mtime: Option<i128>) -> Result<RulesConfig, RuleError> {
+pub fn remove(
+    project_dir: &Path,
+    rule_id: &str,
+    expected_mtime: Option<i128>,
+) -> Result<RulesConfig, RuleError> {
     let path = rules_path(project_dir);
     check_mtime(&path, expected_mtime)?;
     let mut config = load_or_init(project_dir)?;
@@ -116,7 +126,11 @@ pub fn set_enabled(
     Ok(config)
 }
 
-pub fn replace(project_dir: &Path, rule: Rule, expected_mtime: Option<i128>) -> Result<RulesConfig, RuleError> {
+pub fn replace(
+    project_dir: &Path,
+    rule: Rule,
+    expected_mtime: Option<i128>,
+) -> Result<RulesConfig, RuleError> {
     let path = rules_path(project_dir);
     check_mtime(&path, expected_mtime)?;
     let mut config = load_or_init(project_dir)?;
@@ -143,7 +157,10 @@ pub struct SyncReport {
 /// defaults) are preserved untouched. Locked decision Q7 from BRAINSTORM —
 /// user customizations on default rules (disabled, custom enforcement) get
 /// reset on upgrade. Acceptable tradeoff for simplicity.
-pub fn sync_defaults(project_dir: &Path, expected_mtime: Option<i128>) -> Result<SyncReport, RuleError> {
+pub fn sync_defaults(
+    project_dir: &Path,
+    expected_mtime: Option<i128>,
+) -> Result<SyncReport, RuleError> {
     let path = rules_path(project_dir);
     check_mtime(&path, expected_mtime)?;
     let mut config = load_or_init(project_dir)?;

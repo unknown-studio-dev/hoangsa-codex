@@ -127,12 +127,13 @@ pub fn resolve_model(role: &str, cwd: &str) {
 
     let config_path = Path::new(cwd).join(".hoangsa").join("config.json");
     if let Some(content) = read_file(config_path.to_str().unwrap_or(""))
-        && let Ok(cfg) = serde_json::from_str::<Value>(&content) {
-            if let Some(p) = cfg.get("profile").and_then(|v| v.as_str()) {
-                profile = p.to_string();
-            }
-            model_overrides = cfg.get("model_overrides").cloned();
+        && let Ok(cfg) = serde_json::from_str::<Value>(&content)
+    {
+        if let Some(p) = cfg.get("profile").and_then(|v| v.as_str()) {
+            profile = p.to_string();
         }
+        model_overrides = cfg.get("model_overrides").cloned();
+    }
 
     // Check per-role override first
     let model = if let Some(overrides) = &model_overrides {
@@ -166,12 +167,13 @@ pub fn resolve_all(cwd: &str) {
 
     let config_path = Path::new(cwd).join(".hoangsa").join("config.json");
     if let Some(content) = read_file(config_path.to_str().unwrap_or(""))
-        && let Ok(cfg) = serde_json::from_str::<Value>(&content) {
-            if let Some(p) = cfg.get("profile").and_then(|v| v.as_str()) {
-                profile = p.to_string();
-            }
-            model_overrides = cfg.get("model_overrides").cloned();
+        && let Ok(cfg) = serde_json::from_str::<Value>(&content)
+    {
+        if let Some(p) = cfg.get("profile").and_then(|v| v.as_str()) {
+            profile = p.to_string();
         }
+        model_overrides = cfg.get("model_overrides").cloned();
+    }
 
     let mut mappings = serde_json::Map::new();
     for role in ROLES {

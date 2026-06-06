@@ -18,7 +18,6 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use futures::stream::{self, StreamExt};
-use parking_lot::Mutex;
 use hoangsa_memory_core::Result;
 use hoangsa_memory_graph::{Edge, EdgeKind, Graph, Node};
 use hoangsa_memory_parse::{
@@ -26,6 +25,7 @@ use hoangsa_memory_parse::{
     walk::{WalkOptions, walk_sources, walk_text_sources},
 };
 use hoangsa_memory_store::{ChunkDoc, StoreRoot, SymbolRow, VectorCol};
+use parking_lot::Mutex;
 use tracing::debug;
 
 /// How many chunks to embed in one `embed_batch` call. Each provider adapter
@@ -238,7 +238,11 @@ impl Indexer {
         // being embedded plus the consumer's next-batch buffer).
         let (tx, rx) = tokio::sync::mpsc::channel::<Vec<SourceChunk>>(self.concurrency * 2);
         let consumer = if want_embed {
-            Some(tokio::spawn(embed_consumer(self.clone(), rx, stats.clone())))
+            Some(tokio::spawn(embed_consumer(
+                self.clone(),
+                rx,
+                stats.clone(),
+            )))
         } else {
             // Drop the receiver immediately so any stray send fails fast
             // rather than blocking forever.
@@ -368,10 +372,7 @@ impl Indexer {
             return Ok(0);
         }
 
-        self.store
-            .fts
-            .delete_path(&path.to_string_lossy())
-            .await?;
+        self.store.fts.delete_path(&path.to_string_lossy()).await?;
 
         let chunks = hoangsa_memory_parse::parse_text_file(path).await?;
         let chunk_docs: Vec<ChunkDoc> = chunks
@@ -715,10 +716,7 @@ impl Indexer {
         let mut ref_seen: std::collections::HashSet<(String, String)> =
             std::collections::HashSet::new();
         for (referrer, ty) in &table.references {
-            let resolved = resolution
-                .get(ty)
-                .cloned()
-                .unwrap_or_else(|| ty.clone());
+            let resolved = resolution.get(ty).cloned().unwrap_or_else(|| ty.clone());
             if resolved.is_empty() || resolved == *referrer {
                 continue;
             }
@@ -781,12 +779,14 @@ impl Indexer {
             }
             let bus = ev.bus_symbol.as_deref().unwrap_or("*");
             let event_fqn = format!("event::{bus}::{}", topic);
-            event_nodes.entry(event_fqn.clone()).or_insert_with(|| Node {
-                fqn: event_fqn.clone(),
-                kind: "event".to_string(),
-                path: path.to_path_buf(),
-                line: 0,
-            });
+            event_nodes
+                .entry(event_fqn.clone())
+                .or_insert_with(|| Node {
+                    fqn: event_fqn.clone(),
+                    kind: "event".to_string(),
+                    path: path.to_path_buf(),
+                    line: 0,
+                });
             match ev.role {
                 EventRole::Emit => {
                     all_edges.push(Edge {

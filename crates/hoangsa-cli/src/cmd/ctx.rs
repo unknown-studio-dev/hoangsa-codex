@@ -17,8 +17,23 @@ use std::process::Command;
 /// needs plan.json, menu needs DESIGN-SPEC excerpts, audit needs config
 /// stack data.
 const KNOWN_WORKFLOWS: &[&str] = &[
-    "cook", "menu", "audit", "init", "fix", "brainstorm", "prepare", "research", "taste",
-    "serve", "plate", "ship", "check", "addon", "update", "index", "rule",
+    "cook",
+    "menu",
+    "audit",
+    "init",
+    "fix",
+    "brainstorm",
+    "prepare",
+    "research",
+    "taste",
+    "serve",
+    "plate",
+    "ship",
+    "check",
+    "addon",
+    "update",
+    "index",
+    "rule",
 ];
 
 struct Bundle {
@@ -43,11 +58,7 @@ impl Bundle {
 }
 
 fn section_names(bundle: &Bundle) -> Vec<String> {
-    bundle
-        .sections
-        .iter()
-        .map(|(h, _)| h.clone())
-        .collect()
+    bundle.sections.iter().map(|(h, _)| h.clone()).collect()
 }
 
 /// Locate the latest session under `<cwd>/.hoangsa/sessions/` — used when
@@ -261,7 +272,11 @@ fn build_design_spec_section(session_dir: &Path) -> Option<String> {
     let truncated = content.lines().count() > 80;
     Some(format!(
         "```markdown\n{excerpt}{}\n```",
-        if truncated { "\n\n…(truncated — read DESIGN-SPEC.md for full content)" } else { "" }
+        if truncated {
+            "\n\n…(truncated — read DESIGN-SPEC.md for full content)"
+        } else {
+            ""
+        }
     ))
 }
 
@@ -307,10 +322,7 @@ pub fn cmd_ctx(workflow: Option<&str>, session_id: Option<&str>, cwd: &str) {
     // Resolve session dir. Explicit id wins; otherwise use latest.
     let session_dir = match session_id {
         Some(id) if !id.is_empty() => {
-            let p = Path::new(cwd)
-                .join(".hoangsa")
-                .join("sessions")
-                .join(id);
+            let p = Path::new(cwd).join(".hoangsa").join("sessions").join(id);
             if !p.exists() {
                 out(&json!({
                     "error": format!("Session not found: {id}"),
@@ -334,10 +346,13 @@ pub fn cmd_ctx(workflow: Option<&str>, session_id: Option<&str>, cwd: &str) {
     let session_id_derived = session_dir
         .parent()
         .and_then(|parent| {
-            session_dir.file_name().and_then(|n| n.to_str()).map(|name| {
-                let ty = parent.file_name().and_then(|t| t.to_str()).unwrap_or("");
-                format!("{ty}/{name}")
-            })
+            session_dir
+                .file_name()
+                .and_then(|n| n.to_str())
+                .map(|name| {
+                    let ty = parent.file_name().and_then(|t| t.to_str()).unwrap_or("");
+                    format!("{ty}/{name}")
+                })
         })
         .unwrap_or_else(|| "unknown".to_string());
 

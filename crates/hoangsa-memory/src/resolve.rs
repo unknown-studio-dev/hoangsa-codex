@@ -13,4 +13,3 @@ pub fn resolve_root(explicit: Option<&Path>) -> PathBuf {
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     hoangsa_memory_core::resolve_root(&cwd, explicit)
 }
-

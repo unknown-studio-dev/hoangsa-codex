@@ -34,9 +34,7 @@ fn wait_for_no_match(pattern: &str, timeout: Duration) {
             return;
         }
         if Instant::now() > deadline {
-            panic!(
-                "child still alive after {timeout:?}: pgrep -f {pattern:?} returned:\n{stdout}"
-            );
+            panic!("child still alive after {timeout:?}: pgrep -f {pattern:?} returned:\n{stdout}");
         }
         thread::sleep(Duration::from_millis(50));
     }
@@ -116,7 +114,11 @@ fn normal_exit_still_works_with_handler_installed() {
         .spawn()
         .expect("spawn");
     let mut buf = String::new();
-    hsp.stdout.as_mut().unwrap().read_to_string(&mut buf).unwrap();
+    hsp.stdout
+        .as_mut()
+        .unwrap()
+        .read_to_string(&mut buf)
+        .unwrap();
     let status = hsp.wait().unwrap();
     assert_eq!(status.code(), Some(0));
     assert_eq!(buf.trim(), "hi");

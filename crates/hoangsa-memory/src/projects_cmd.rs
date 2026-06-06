@@ -129,10 +129,7 @@ fn add(
         registry.rename(&slug, &n);
     }
     registry.save(home)?;
-    let project = registry
-        .find(&slug)
-        .expect("just inserted")
-        .clone();
+    let project = registry.find(&slug).expect("just inserted").clone();
     if json {
         println!("{}", serde_json::to_string_pretty(&project)?);
     } else {
@@ -153,7 +150,10 @@ fn remove(home: &std::path::Path, slug: &str, json: bool) -> anyhow::Result<()> 
         registry.save(home)?;
     }
     if json {
-        println!("{}", serde_json::json!({ "slug": slug, "removed": removed }));
+        println!(
+            "{}",
+            serde_json::json!({ "slug": slug, "removed": removed })
+        );
     } else if removed {
         println!("removed {slug}");
     } else {
@@ -202,10 +202,7 @@ fn which(home: &std::path::Path, path: Option<PathBuf>, json: bool) -> anyhow::R
     } else {
         println!("slug:       {slug}");
         println!("path:       {}", abs.display());
-        println!(
-            "registered: {}",
-            if registered { "yes" } else { "no" }
-        );
+        println!("registered: {}", if registered { "yes" } else { "no" });
     }
     Ok(())
 }

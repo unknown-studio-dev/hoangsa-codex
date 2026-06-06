@@ -45,12 +45,7 @@ fn no_report_when_nothing_to_say() {
 fn raw_hint_appears_when_color_stripped() {
     // color-only change: no byte saving, but we stripped escapes → user
     // should know they can re-run with --raw to see the original.
-    let (stdout, stderr, code) = run_hsp(&[
-        "run",
-        "sh",
-        "-c",
-        "printf '\\033[31mred\\033[0m\\n'",
-    ]);
+    let (stdout, stderr, code) = run_hsp(&["run", "sh", "-c", "printf '\\033[31mred\\033[0m\\n'"]);
     assert_eq!(code, Some(0));
     assert_eq!(stdout, "red\n");
     assert!(
@@ -114,16 +109,14 @@ fn report_surfaces_when_filter_trims() {
 fn raw_flag_preserves_ansi_and_silences_report() {
     // --raw is the documented escape hatch — must bypass strip and bypass
     // the report footer entirely so subst-style captures aren't polluted.
-    let (stdout, stderr, code) = run_hsp(&[
-        "run",
-        "--raw",
-        "sh",
-        "-c",
-        "printf '\\033[31mred\\033[0m'",
-    ]);
+    let (stdout, stderr, code) =
+        run_hsp(&["run", "--raw", "sh", "-c", "printf '\\033[31mred\\033[0m'"]);
     assert_eq!(code, Some(0));
     assert!(stdout.contains("\x1b[31m"), "got: {stdout:?}");
-    assert!(!stderr.contains("--raw"), "no self-referential hint, got: {stderr:?}");
+    assert!(
+        !stderr.contains("--raw"),
+        "no self-referential hint, got: {stderr:?}"
+    );
 }
 
 #[cfg(unix)]

@@ -19,12 +19,15 @@ fn main() {
         }
     }
 
-    let project_dir = project_dir.unwrap_or_else(|| {
-        std::env::current_dir().expect("cwd is readable")
-    });
+    let project_dir =
+        project_dir.unwrap_or_else(|| std::env::current_dir().expect("cwd is readable"));
 
     if !project_dir.exists() {
         eprintln!("project_dir does not exist: {}", project_dir.display());
+        std::process::exit(1);
+    }
+    if !project_dir.is_dir() {
+        eprintln!("project_dir is not a directory: {}", project_dir.display());
         std::process::exit(1);
     }
 

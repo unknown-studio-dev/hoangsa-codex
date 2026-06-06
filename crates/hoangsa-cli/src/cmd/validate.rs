@@ -38,9 +38,10 @@ pub fn cmd_plan(file_path: &str) {
     }
 
     if let Some(wd) = plan.get("workspace_dir").and_then(|v| v.as_str())
-        && !is_absolute(wd) {
-            errors.push("workspace_dir must be an absolute path".to_string());
-        }
+        && !is_absolute(wd)
+    {
+        errors.push("workspace_dir must be an absolute path".to_string());
+    }
 
     if let Some(task_arr) = tasks {
         for t in task_arr {
@@ -61,13 +62,15 @@ pub fn cmd_plan(file_path: &str) {
                 }
             }
             if let Some(complexity) = t.get("complexity").and_then(|v| v.as_str())
-                && !["low", "medium", "high"].contains(&complexity) {
-                    errors.push(format!("Task {tid}: complexity must be low|medium|high"));
-                }
+                && !["low", "medium", "high"].contains(&complexity)
+            {
+                errors.push(format!("Task {tid}: complexity must be low|medium|high"));
+            }
             if let Some(budget) = t.get("budget_tokens").and_then(|v| v.as_u64())
-                && budget > 80000 {
-                    warnings.push(format!("Task {tid}: budget {budget} exceeds 80k limit"));
-                }
+                && budget > 80000
+            {
+                warnings.push(format!("Task {tid}: budget {budget} exceeds 80k limit"));
+            }
             match t.get("files").and_then(|v| v.as_array()) {
                 Some(files) if files.is_empty() => {
                     errors.push(format!("Task {tid}: files must be non-empty array"));
@@ -75,10 +78,10 @@ pub fn cmd_plan(file_path: &str) {
                 Some(files) => {
                     for f in files {
                         if let Some(fp) = f.as_str()
-                            && !is_absolute(fp) {
-                                errors
-                                    .push(format!("Task {tid}: file path not absolute: {fp}"));
-                            }
+                            && !is_absolute(fp)
+                        {
+                            errors.push(format!("Task {tid}: file path not absolute: {fp}"));
+                        }
                     }
                 }
                 None => {
@@ -90,9 +93,8 @@ pub fn cmd_plan(file_path: &str) {
                     if let Some(ps) = p.as_str() {
                         // Expected format: /absolute/path/file:L1-L2
                         if !ps.is_empty() && !is_absolute(ps.split(':').next().unwrap_or("")) {
-                            warnings.push(format!(
-                                "Task {tid}: context_pointer not absolute: {ps}"
-                            ));
+                            warnings
+                                .push(format!("Task {tid}: context_pointer not absolute: {ps}"));
                         }
                     }
                 }
@@ -101,11 +103,12 @@ pub fn cmd_plan(file_path: &str) {
                 let trimmed = acceptance.trim();
                 if !trimmed.is_empty()
                     && let Some(first_char) = trimmed.chars().next()
-                        && !first_char.is_ascii_lowercase() {
-                            warnings.push(format!(
-                                "Task {tid}: acceptance may not be a runnable command"
-                            ));
-                        }
+                    && !first_char.is_ascii_lowercase()
+                {
+                    warnings.push(format!(
+                        "Task {tid}: acceptance may not be a runnable command"
+                    ));
+                }
             }
         }
     }
@@ -123,18 +126,19 @@ pub fn cmd_plan(file_path: &str) {
     // Budget sanity
     if let (Some(task_arr), Some(total_budget)) =
         (tasks, plan.get("budget_tokens").and_then(|v| v.as_f64()))
-        && total_budget > 0.0 {
-            let sum: f64 = task_arr
-                .iter()
-                .filter_map(|t| t.get("budget_tokens").and_then(|v| v.as_f64()))
-                .sum();
-            if ((sum - total_budget) / total_budget).abs() > 0.1 {
-                warnings.push(format!(
-                    "Budget mismatch: declared {}, tasks sum to {}",
-                    total_budget as u64, sum as u64
-                ));
-            }
+        && total_budget > 0.0
+    {
+        let sum: f64 = task_arr
+            .iter()
+            .filter_map(|t| t.get("budget_tokens").and_then(|v| v.as_f64()))
+            .sum();
+        if ((sum - total_budget) / total_budget).abs() > 0.1 {
+            warnings.push(format!(
+                "Budget mismatch: declared {}, tasks sum to {}",
+                total_budget as u64, sum as u64
+            ));
         }
+    }
 
     let task_count = tasks.map(|a| a.len()).unwrap_or(0);
     out(&json!({
@@ -190,16 +194,16 @@ pub fn cmd_resolve(file_path: &str) {
                     if let Some(fp) = file_val.as_str().map(|s| s.to_string())
                         && let Some((resolved, reason)) =
                             resolve_path(&fp, &workspace_dir, workspace_path, &file_index)
-                        {
-                            fixes.push(json!({
-                                "task": tid,
-                                "field": "files",
-                                "old": fp,
-                                "new": resolved,
-                                "reason": reason,
-                            }));
-                            *file_val = Value::String(resolved);
-                        }
+                    {
+                        fixes.push(json!({
+                            "task": tid,
+                            "field": "files",
+                            "old": fp,
+                            "new": resolved,
+                            "reason": reason,
+                        }));
+                        *file_val = Value::String(resolved);
+                    }
                 }
             }
 
@@ -212,9 +216,7 @@ pub fn cmd_resolve(file_path: &str) {
                     if let Some(ps) = ptr_val.as_str().map(|s| s.to_string()) {
                         // Split off :L1-L2 suffix
                         let (path_part, line_suffix) = match ps.rfind(':') {
-                            Some(i) if ps[i + 1..].contains('-') => {
-                                (&ps[..i], Some(&ps[i..]))
-                            }
+                            Some(i) if ps[i + 1..].contains('-') => (&ps[..i], Some(&ps[i..])),
                             _ => (ps.as_str(), None),
                         };
                         if let Some((resolved, reason)) =
@@ -323,10 +325,11 @@ fn resolve_path(
         }
         // Try matching just the filename
         if let Some(fname) = abs_path.file_name().and_then(|f| f.to_str())
-            && let Some(matched) = fuzzy_match(fname, file_index) {
-                let resolved = workspace_path.join(&matched).to_string_lossy().to_string();
-                return Some((resolved, format!("fuzzy_filename:{fname}→{matched}")));
-            }
+            && let Some(matched) = fuzzy_match(fname, file_index)
+        {
+            let resolved = workspace_path.join(&matched).to_string_lossy().to_string();
+            return Some((resolved, format!("fuzzy_filename:{fname}→{matched}")));
+        }
     }
 
     None // path is absolute and exists — no change needed
@@ -356,12 +359,7 @@ fn fuzzy_match(query: &str, file_index: &[String]) -> Option<String> {
         .unwrap_or(query);
     let name_matches: Vec<&String> = file_index
         .iter()
-        .filter(|f| {
-            Path::new(f.as_str())
-                .file_name()
-                .and_then(|n| n.to_str())
-                == Some(fname)
-        })
+        .filter(|f| Path::new(f.as_str()).file_name().and_then(|n| n.to_str()) == Some(fname))
         .collect();
     if name_matches.len() == 1 {
         return Some(name_matches[0].clone());

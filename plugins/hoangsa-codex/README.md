@@ -21,3 +21,6 @@ Workflow commands are exposed as Codex skills such as `$hoangsa-menu`,
 direct installer so it can write managed custom prompts into
 `~/.codex/prompts/`; Codex exposes those as `/prompts:hoangsa-menu` style
 commands.
+
+The direct installer preserves Codex TOML settings semantically after
+parse/write, but does not preserve comments or original formatting.

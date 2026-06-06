@@ -51,7 +51,10 @@ pub struct RestartOutcome {
 /// the MCP client (Claude Code) does that on next memory tool call. The UI
 /// shows a hint asking the user to retry their action.
 pub fn restart() -> RestartOutcome {
-    let out = Command::new("pkill").arg("-f").arg("hoangsa-memory-mcp").output();
+    let out = Command::new("pkill")
+        .arg("-f")
+        .arg("hoangsa-memory-mcp")
+        .output();
     match out {
         Ok(o) if o.status.success() => RestartOutcome {
             killed: true,
@@ -89,7 +92,10 @@ mod tests {
     fn slug_uses_last_two_components() {
         let p = std::path::PathBuf::from("/tmp/foo/my-project");
         let s = project_slug(&p);
-        assert!(s.contains("foo-my-project") || s == "foo-my-project", "got {s}");
+        assert!(
+            s.contains("foo-my-project") || s == "foo-my-project",
+            "got {s}"
+        );
     }
 
     #[test]

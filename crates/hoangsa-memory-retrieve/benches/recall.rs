@@ -10,11 +10,11 @@
 //! Criterion prints a full histogram including p50 and p95 automatically.
 
 use criterion::{Criterion, criterion_group, criterion_main};
-use tempfile::tempdir;
 use hoangsa_memory_core::{Mode, Query};
 use hoangsa_memory_parse::LanguageRegistry;
 use hoangsa_memory_retrieve::{Indexer, recall};
 use hoangsa_memory_store::StoreRoot;
+use tempfile::tempdir;
 
 // ---------------------------------------------------------------------------
 // Representative source snippets (5 synthetic Rust files).

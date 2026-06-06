@@ -64,10 +64,7 @@ fn resolve_session_dir(raw: &str, cwd: &str) -> PathBuf {
         return p.to_path_buf();
     }
     // Try resolving as session ID under cwd/.hoangsa/sessions/
-    let via_sessions = Path::new(cwd)
-        .join(".hoangsa")
-        .join("sessions")
-        .join(raw);
+    let via_sessions = Path::new(cwd).join(".hoangsa").join("sessions").join(raw);
     if via_sessions.join("state.json").exists() || via_sessions.exists() {
         return via_sessions;
     }
@@ -161,7 +158,9 @@ pub fn cmd_get(session_dir: Option<&str>, cwd: &str) {
 
     let state_file = Path::new(session_dir).join("state.json");
     if !state_file.exists() {
-        out(&json!({ "error": format!("state.json not found at {}. Run `state init` first.", state_file.display()) }));
+        out(
+            &json!({ "error": format!("state.json not found at {}. Run `state init` first.", state_file.display()) }),
+        );
         return;
     }
     let state = read_json(state_file.to_str().unwrap_or(""));
@@ -195,7 +194,9 @@ pub fn cmd_update(session_dir: Option<&str>, json_patch: Option<&str>, cwd: &str
 
     let state_file = Path::new(session_dir).join("state.json");
     if !state_file.exists() {
-        out(&json!({ "error": format!("state.json not found at {}. Run `state init` first.", state_file.display()) }));
+        out(
+            &json!({ "error": format!("state.json not found at {}. Run `state init` first.", state_file.display()) }),
+        );
         return;
     }
     let state = read_json(state_file.to_str().unwrap_or(""));

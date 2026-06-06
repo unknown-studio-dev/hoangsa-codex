@@ -81,7 +81,9 @@ pub enum ArchiveCmd {
 
 use anyhow::{Context, Result, bail};
 use hoangsa_memory_retrieve::archive::{IngestOpts, run_ingest};
-use hoangsa_memory_store::{ArchiveTracker, EmbeddedVectorStore, StoreRoot, VectorCol, VectorStore};
+use hoangsa_memory_store::{
+    ArchiveTracker, EmbeddedVectorStore, StoreRoot, VectorCol, VectorStore,
+};
 
 // ---------------------------------------------------------------------------
 // ingest command — thin CLI wrapper around `hoangsa_memory_retrieve::archive::run_ingest`
@@ -222,7 +224,10 @@ pub async fn cmd_archive_search(
             conditions.push(serde_json::json!({"topic": {"$eq": t}}));
         }
         filter = Some(if conditions.len() == 1 {
-            conditions.into_iter().next().unwrap_or(serde_json::Value::Null)
+            conditions
+                .into_iter()
+                .next()
+                .unwrap_or(serde_json::Value::Null)
         } else {
             serde_json::json!({"$and": conditions})
         });

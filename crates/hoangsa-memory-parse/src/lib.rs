@@ -23,8 +23,8 @@ pub mod watch;
 
 use std::path::{Path, PathBuf};
 
-use serde::{Deserialize, Serialize};
 use hoangsa_memory_core::{Error, Result};
+use serde::{Deserialize, Serialize};
 use tree_sitter::{Node, Parser};
 
 pub use language::{Language, LanguageRegistry};
@@ -291,7 +291,11 @@ fn rust_crate_qualified_path(path: &Path) -> Option<String> {
 
     // Skip the leading `src/` if present — it's not part of the module path.
     let mut iter = rel.components().peekable();
-    if iter.peek().map(|c| c.as_os_str().to_string_lossy() == "src") == Some(true) {
+    if iter
+        .peek()
+        .map(|c| c.as_os_str().to_string_lossy() == "src")
+        == Some(true)
+    {
         iter.next();
     }
     let comps: Vec<_> = iter.collect();
@@ -340,9 +344,7 @@ fn read_cargo_package_name(cargo: &Path) -> Option<String> {
             in_package = line == "[package]";
             continue;
         }
-        if in_package
-            && let Some(rest) = line.strip_prefix("name")
-        {
+        if in_package && let Some(rest) = line.strip_prefix("name") {
             let rest = rest.trim_start();
             if let Some(eq) = rest.strip_prefix('=') {
                 let val = eq.trim().trim_matches('"').trim_matches('\'');

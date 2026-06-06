@@ -10,8 +10,8 @@
 //! Or with `-- --test` for a single-iteration smoke run suitable for CI.
 
 use criterion::{Criterion, criterion_group, criterion_main};
-use tempfile::TempDir;
 use hoangsa_memory_store::{KvStore, NodeRow};
+use tempfile::TempDir;
 use tokio::runtime::Runtime;
 
 // ---------------------------------------------------------------------------

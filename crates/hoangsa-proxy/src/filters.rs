@@ -159,10 +159,7 @@ mod tests {
     #[test]
     fn collapse_repeats_groups_consecutive() {
         let xs = v(&["a", "a", "a", "b", "c", "c"]);
-        assert_eq!(
-            collapse_repeats(&xs),
-            v(&["a (x3)", "b", "c (x2)"])
-        );
+        assert_eq!(collapse_repeats(&xs), v(&["a (x3)", "b", "c (x2)"]));
     }
 
     #[test]

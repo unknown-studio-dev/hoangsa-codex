@@ -35,16 +35,7 @@ fn run(args: &[&str]) -> (String, Option<i32>) {
 fn dashdash_survives_to_child() {
     // `hsp run sh -c 'echo "$@"' -- -v a.txt` — the child's `$@` must
     // include the literal `--`.
-    let (out, code) = run(&[
-        "run",
-        "sh",
-        "-c",
-        "echo \"$@\"",
-        "sh",
-        "--",
-        "-v",
-        "a.txt",
-    ]);
+    let (out, code) = run(&["run", "sh", "-c", "echo \"$@\"", "sh", "--", "-v", "a.txt"]);
     assert_eq!(code, Some(0));
     assert_eq!(out.trim(), "-- -v a.txt", "got: {out:?}");
 }

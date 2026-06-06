@@ -21,9 +21,9 @@
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 
+use hoangsa_memory_core::{Error, Result};
 use redb::{Database, ReadableDatabase, ReadableTable, TableDefinition};
 use serde::{Deserialize, Serialize};
-use hoangsa_memory_core::{Error, Result};
 
 // ---- table definitions ------------------------------------------------------
 
@@ -169,9 +169,7 @@ impl KvStore {
         .await
         .map_err(|e| Error::Store(format!("join: {e}")))??;
 
-        Ok(Self {
-            db: Arc::new(db),
-        })
+        Ok(Self { db: Arc::new(db) })
     }
 
     // --- meta -----------------------------------------------------------
@@ -1038,7 +1036,10 @@ mod prefix_scan_tests {
             .unwrap();
 
         // Qualified suffix → unique hit.
-        let hits = store.find_nodes_by_suffix("hook::cmd_enforce").await.unwrap();
+        let hits = store
+            .find_nodes_by_suffix("hook::cmd_enforce")
+            .await
+            .unwrap();
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].id, "hook::cmd_enforce");
 

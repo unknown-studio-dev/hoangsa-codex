@@ -76,9 +76,7 @@ impl VectorCol for RecordingVectorCol {
 /// chunk per file. Returns the files written.
 async fn write_one_fn_per_file(dir: &std::path::Path, n: usize) {
     for i in 0..n {
-        let body = format!(
-            "pub fn item_{i}(x: i32) -> i32 {{\n    x + {i}\n}}\n"
-        );
+        let body = format!("pub fn item_{i}(x: i32) -> i32 {{\n    x + {i}\n}}\n");
         tokio::fs::write(dir.join(format!("item_{i}.rs")), body)
             .await
             .unwrap();
@@ -126,10 +124,7 @@ async fn streaming_embed_visits_every_chunk_across_batches() {
     for (i, &sz) in sizes.iter().enumerate() {
         assert!(sz > 0, "batch {i} was empty");
         if i + 1 < sizes.len() {
-            assert_eq!(
-                sz, 256,
-                "non-final batch {i} was {sz}, expected 256"
-            );
+            assert_eq!(sz, 256, "non-final batch {i} was {sz}, expected 256");
         }
     }
 }

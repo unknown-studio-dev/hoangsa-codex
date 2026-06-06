@@ -41,7 +41,12 @@ impl TestRunner {
         parse_last_json(&stdout)
     }
 
-    fn run_cli_with_stdin(&self, args: &[&str], cwd: &Path, stdin_data: &str) -> (bool, String, String) {
+    fn run_cli_with_stdin(
+        &self,
+        args: &[&str],
+        cwd: &Path,
+        stdin_data: &str,
+    ) -> (bool, String, String) {
         use std::io::Write;
         use std::process::Stdio;
         let mut child = Command::new(&self.cli)
@@ -56,7 +61,9 @@ impl TestRunner {
             let mut stdin = stdin;
             stdin.write_all(stdin_data.as_bytes()).ok();
         }
-        let output = child.wait_with_output().expect("failed to wait for hoangsa-cli");
+        let output = child
+            .wait_with_output()
+            .expect("failed to wait for hoangsa-cli");
         let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
         (output.status.success(), stdout, stderr)
@@ -92,9 +99,10 @@ fn parse_last_json(s: &str) -> Value {
             depth -= 1;
             if depth == 0 {
                 if let Some(s_idx) = start
-                    && let Ok(v) = serde_json::from_str::<Value>(&s[s_idx..=i]) {
-                        results.push(v);
-                    }
+                    && let Ok(v) = serde_json::from_str::<Value>(&s[s_idx..=i])
+                {
+                    results.push(v);
+                }
                 start = None;
             }
         }
@@ -251,9 +259,9 @@ fn test_validate_plan(t: &mut TestRunner) {
         let p = dir.join("cycle.json");
         fs::write(&p, plan.to_string()).unwrap();
         let out = t.run_json(&["validate", "plan", p.to_str().unwrap()], &dir);
-        let has_cycle = out["errors"].as_array().is_some_and(|e| {
-            e.iter().any(|x| x.as_str().unwrap_or("").contains("Cycle"))
-        });
+        let has_cycle = out["errors"]
+            .as_array()
+            .is_some_and(|e| e.iter().any(|x| x.as_str().unwrap_or("").contains("Cycle")));
         t.check(
             "detects cycles",
             out["valid"] == false && has_cycle,
@@ -825,7 +833,6 @@ fn test_config(t: &mut TestRunner) {
     cleanup(&dir);
 }
 
-
 fn test_context(t: &mut TestRunner) {
     eprintln!("\n\x1b[1m● context\x1b[0m");
 
@@ -1107,7 +1114,10 @@ fn test_media(t: &mut TestRunner) {
 
     // media montage with a non-existent dir returns an error JSON
     {
-        let out = t.run_json(&["media", "montage", "/nonexistent/no_such_frames_dir"], &dir);
+        let out = t.run_json(
+            &["media", "montage", "/nonexistent/no_such_frames_dir"],
+            &dir,
+        );
         t.check(
             "media montage non-existent dir returns error",
             out["error"].is_string(),
@@ -1180,7 +1190,11 @@ fn test_addon(t: &mut TestRunner) {
         );
         t.check(
             "addon list shows active_addons empty",
-            out["active_addons"].as_array().map(|a| a.len()).unwrap_or(1) == 0,
+            out["active_addons"]
+                .as_array()
+                .map(|a| a.len())
+                .unwrap_or(1)
+                == 0,
             &format!("got {out:?}"),
         );
         // Check that each available has name, frameworks, active fields
@@ -1206,14 +1220,17 @@ fn test_addon(t: &mut TestRunner) {
         );
         t.check(
             "addon add active_addons updated",
-            out["active_addons"].as_array().map(|a| a.len()).unwrap_or(0) == 2,
+            out["active_addons"]
+                .as_array()
+                .map(|a| a.len())
+                .unwrap_or(0)
+                == 2,
             &format!("got {out:?}"),
         );
         // Check config.json was updated
-        let config: Value = serde_json::from_str(
-            &fs::read_to_string(config_dir.join("config.json")).unwrap(),
-        )
-        .unwrap();
+        let config: Value =
+            serde_json::from_str(&fs::read_to_string(config_dir.join("config.json")).unwrap())
+                .unwrap();
         let active = config["codebase"]["active_addons"]
             .as_array()
             .map(|a| a.len())
@@ -1243,11 +1260,7 @@ fn test_addon(t: &mut TestRunner) {
         let out = t.run_json(&["addon", "add", d, "[\"nonexistent\"]"], &dir);
         t.check(
             "addon add unknown → error",
-            out["error"].is_string()
-                && out["error"]
-                    .as_str()
-                    .unwrap_or("")
-                    .contains("nonexistent"),
+            out["error"].is_string() && out["error"].as_str().unwrap_or("").contains("nonexistent"),
             &format!("got {out:?}"),
         );
     }
@@ -1277,7 +1290,11 @@ fn test_addon(t: &mut TestRunner) {
         );
         t.check(
             "addon remove active_addons updated",
-            out["active_addons"].as_array().map(|a| a.len()).unwrap_or(0) == 1,
+            out["active_addons"]
+                .as_array()
+                .map(|a| a.len())
+                .unwrap_or(0)
+                == 1,
             &format!("got {out:?}"),
         );
         t.check(
@@ -1367,8 +1384,7 @@ fn test_rule_engine(t: &mut TestRunner) {
         let out = t.run_json(&["rule", "list", d], &dir);
         t.check(
             "rule list empty",
-            out["rules"].as_array().is_some_and(|a| a.is_empty())
-                && out["count"] == 0,
+            out["rules"].as_array().is_some_and(|a| a.is_empty()) && out["count"] == 0,
             &format!("got {out:?}"),
         );
         cleanup(&dir);
@@ -1412,8 +1428,7 @@ fn test_rule_engine(t: &mut TestRunner) {
         let list_out = t.run_json(&["rule", "list", d], &dir);
         t.check(
             "rule list empty after remove",
-            list_out["count"] == 0
-                && list_out["rules"].as_array().is_some_and(|a| a.is_empty()),
+            list_out["count"] == 0 && list_out["rules"].as_array().is_some_and(|a| a.is_empty()),
             &format!("got {list_out:?}"),
         );
         cleanup(&dir);
@@ -1567,11 +1582,7 @@ fn test_rule_engine(t: &mut TestRunner) {
         );
         t.check(
             "rule gate warn includes reason",
-            out["reason"].is_string()
-                && out["reason"]
-                    .as_str()
-                    .unwrap_or("")
-                    .contains("R-WARN"),
+            out["reason"].is_string() && out["reason"].as_str().unwrap_or("").contains("R-WARN"),
             &format!("got {out:?}"),
         );
         cleanup(&dir);

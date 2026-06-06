@@ -1,5 +1,5 @@
 use crate::helpers::out;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::fs;
 use std::io::BufRead;
 use std::path::{Path, PathBuf};
@@ -14,17 +14,47 @@ struct Pricing {
 fn get_pricing(model_id: &str) -> Pricing {
     let norm = model_id.to_lowercase().replace(['-', '_'], "");
     if norm.contains("claudeopus4") && !norm.contains("claudeopus41") {
-        Pricing { input: 5.0, cache_write: 6.25, cache_read: 0.50, output: 25.0 }
+        Pricing {
+            input: 5.0,
+            cache_write: 6.25,
+            cache_read: 0.50,
+            output: 25.0,
+        }
     } else if norm.contains("claudeopus41") || norm.contains("claudeopus3") {
-        Pricing { input: 15.0, cache_write: 18.75, cache_read: 1.50, output: 75.0 }
+        Pricing {
+            input: 15.0,
+            cache_write: 18.75,
+            cache_read: 1.50,
+            output: 75.0,
+        }
     } else if norm.contains("claudesonnet") {
-        Pricing { input: 3.0, cache_write: 3.75, cache_read: 0.30, output: 15.0 }
+        Pricing {
+            input: 3.0,
+            cache_write: 3.75,
+            cache_read: 0.30,
+            output: 15.0,
+        }
     } else if norm.contains("claudehaiku45") {
-        Pricing { input: 1.0, cache_write: 1.25, cache_read: 0.10, output: 5.0 }
+        Pricing {
+            input: 1.0,
+            cache_write: 1.25,
+            cache_read: 0.10,
+            output: 5.0,
+        }
     } else if norm.contains("claudehaiku3") {
-        Pricing { input: 0.25, cache_write: 0.30, cache_read: 0.03, output: 1.25 }
+        Pricing {
+            input: 0.25,
+            cache_write: 0.30,
+            cache_read: 0.03,
+            output: 1.25,
+        }
     } else {
-        Pricing { input: 3.0, cache_write: 3.75, cache_read: 0.30, output: 15.0 }
+        Pricing {
+            input: 3.0,
+            cache_write: 3.75,
+            cache_read: 0.30,
+            output: 15.0,
+        }
     }
 }
 
@@ -44,7 +74,9 @@ impl TurnUsage {
 
     fn hit_rate(&self) -> f64 {
         let cacheable = self.cacheable_tokens();
-        if cacheable == 0 { return 0.0; }
+        if cacheable == 0 {
+            return 0.0;
+        }
         self.cache_read_tokens as f64 / cacheable as f64
     }
 }
@@ -79,7 +111,12 @@ fn compute_turn_metrics(turn: TurnUsage) -> TurnMetrics {
 
     let cache_write_overhead = turn.cache_creation_tokens as f64 * (ppt_write - ppt_input);
 
-    TurnMetrics { turn, actual_cost, cost_no_cache, cache_write_overhead }
+    TurnMetrics {
+        turn,
+        actual_cost,
+        cost_no_cache,
+        cache_write_overhead,
+    }
 }
 
 struct SessionResult {
@@ -104,11 +141,17 @@ struct SessionResult {
 }
 
 fn grade_from_score(score: f64) -> &'static str {
-    if score >= 0.70 { "A" }
-    else if score >= 0.50 { "B" }
-    else if score >= 0.30 { "C" }
-    else if score >= 0.10 { "D" }
-    else { "F" }
+    if score >= 0.70 {
+        "A"
+    } else if score >= 0.50 {
+        "B"
+    } else if score >= 0.30 {
+        "C"
+    } else if score >= 0.10 {
+        "D"
+    } else {
+        "F"
+    }
 }
 
 fn parse_session(path: &Path) -> Option<Vec<TurnUsage>> {
@@ -121,7 +164,9 @@ fn parse_session(path: &Path) -> Option<Vec<TurnUsage>> {
             Ok(l) => l,
             Err(_) => continue,
         };
-        if line.is_empty() { continue; }
+        if line.is_empty() {
+            continue;
+        }
         let event: Value = match serde_json::from_str(&line) {
             Ok(v) => v,
             Err(_) => continue,
@@ -138,15 +183,34 @@ fn parse_session(path: &Path) -> Option<Vec<TurnUsage>> {
             _ => continue,
         };
 
-        let timestamp = event.get("timestamp").and_then(|v| v.as_str()).map(|s| s.to_string());
-        let model = message.get("model").and_then(|v| v.as_str()).unwrap_or("unknown").to_string();
+        let timestamp = event
+            .get("timestamp")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let model = message
+            .get("model")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown")
+            .to_string();
 
         turns.push(TurnUsage {
             model,
-            input_tokens: usage.get("input_tokens").and_then(|v| v.as_u64()).unwrap_or(0),
-            output_tokens: usage.get("output_tokens").and_then(|v| v.as_u64()).unwrap_or(0),
-            cache_creation_tokens: usage.get("cache_creation_input_tokens").and_then(|v| v.as_u64()).unwrap_or(0),
-            cache_read_tokens: usage.get("cache_read_input_tokens").and_then(|v| v.as_u64()).unwrap_or(0),
+            input_tokens: usage
+                .get("input_tokens")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0),
+            output_tokens: usage
+                .get("output_tokens")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0),
+            cache_creation_tokens: usage
+                .get("cache_creation_input_tokens")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0),
+            cache_read_tokens: usage
+                .get("cache_read_input_tokens")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0),
             timestamp,
         });
     }
@@ -168,7 +232,11 @@ fn analyze_session(path: &Path) -> Option<SessionResult> {
     let total_cache_read: u64 = turns.iter().map(|t| t.cache_read_tokens).sum();
     let total_cacheable = total_cache_creation + total_cache_read;
 
-    let hit_rate = if total_cacheable == 0 { 0.0 } else { total_cache_read as f64 / total_cacheable as f64 };
+    let hit_rate = if total_cacheable == 0 {
+        0.0
+    } else {
+        total_cache_read as f64 / total_cacheable as f64
+    };
 
     let metrics: Vec<TurnMetrics> = turns.into_iter().map(compute_turn_metrics).collect();
 
@@ -177,18 +245,40 @@ fn analyze_session(path: &Path) -> Option<SessionResult> {
     let cache_write_overhead: f64 = metrics.iter().map(|m| m.cache_write_overhead).sum();
     let savings = cost_no_cache - actual_cost;
     let net_savings = savings - cache_write_overhead;
-    let savings_pct = if cost_no_cache == 0.0 { 0.0 } else { savings / cost_no_cache * 100.0 };
+    let savings_pct = if cost_no_cache == 0.0 {
+        0.0
+    } else {
+        savings / cost_no_cache * 100.0
+    };
 
     let total_all_input = total_input + total_cacheable;
     let denom = total_all_input + total_cacheable;
-    let efficiency_score = if denom == 0 { 0.0 } else { hit_rate * (total_cacheable as f64 / denom as f64) };
+    let efficiency_score = if denom == 0 {
+        0.0
+    } else {
+        hit_rate * (total_cacheable as f64 / denom as f64)
+    };
     let grade = grade_from_score(efficiency_score).to_string();
 
     Some(SessionResult {
-        session_id, project, model, started_at, num_turns,
-        total_input, total_output, total_cache_creation, total_cache_read,
-        hit_rate, efficiency_score, grade, actual_cost, cost_no_cache,
-        savings, net_savings, savings_pct, turns: metrics,
+        session_id,
+        project,
+        model,
+        started_at,
+        num_turns,
+        total_input,
+        total_output,
+        total_cache_creation,
+        total_cache_read,
+        hit_rate,
+        efficiency_score,
+        grade,
+        actual_cost,
+        cost_no_cache,
+        savings,
+        net_savings,
+        savings_pct,
+        turns: metrics,
     })
 }
 
@@ -255,13 +345,17 @@ pub fn cmd_cache(args: &[&str], cwd: &str) {
 
     let project_dir = resolve_project_dir(cwd);
     if !project_dir.is_dir() {
-        out(&json!({"error": "No Claude sessions found for this project", "path": project_dir.display().to_string()}));
+        out(
+            &json!({"error": "No Claude sessions found for this project", "path": project_dir.display().to_string()}),
+        );
         return;
     }
 
     let jsonl_files = discover_sessions(&project_dir);
     if jsonl_files.is_empty() {
-        out(&json!({"error": "No JSONL session files found", "path": project_dir.display().to_string()}));
+        out(
+            &json!({"error": "No JSONL session files found", "path": project_dir.display().to_string()}),
+        );
         return;
     }
 
@@ -287,19 +381,23 @@ pub fn cmd_cache(args: &[&str], cwd: &str) {
         }
 
         let s = &matches[0];
-        let turn_data: Vec<Value> = s.turns.iter().map(|tm| {
-            json!({
-                "model": tm.turn.model,
-                "input_tokens": tm.turn.input_tokens,
-                "output_tokens": tm.turn.output_tokens,
-                "cache_creation_tokens": tm.turn.cache_creation_tokens,
-                "cache_read_tokens": tm.turn.cache_read_tokens,
-                "hit_rate": (tm.turn.hit_rate() * 1000.0).round() / 1000.0,
-                "actual_cost": (tm.actual_cost * 10000.0).round() / 10000.0,
-                "cost_no_cache": (tm.cost_no_cache * 10000.0).round() / 10000.0,
-                "savings": (tm.savings() * 10000.0).round() / 10000.0,
+        let turn_data: Vec<Value> = s
+            .turns
+            .iter()
+            .map(|tm| {
+                json!({
+                    "model": tm.turn.model,
+                    "input_tokens": tm.turn.input_tokens,
+                    "output_tokens": tm.turn.output_tokens,
+                    "cache_creation_tokens": tm.turn.cache_creation_tokens,
+                    "cache_read_tokens": tm.turn.cache_read_tokens,
+                    "hit_rate": (tm.turn.hit_rate() * 1000.0).round() / 1000.0,
+                    "actual_cost": (tm.actual_cost * 10000.0).round() / 10000.0,
+                    "cost_no_cache": (tm.cost_no_cache * 10000.0).round() / 10000.0,
+                    "savings": (tm.savings() * 10000.0).round() / 10000.0,
+                })
             })
-        }).collect();
+            .collect();
 
         out(&json!({
             "session_id": s.session_id,
@@ -337,20 +435,27 @@ pub fn cmd_cache(args: &[&str], cwd: &str) {
     let total_overhead: f64 = sessions.iter().map(|s| s.savings - s.net_savings).sum();
     let total_net = total_savings - total_overhead;
     let avg_hit = sessions.iter().map(|s| s.hit_rate).sum::<f64>() / sessions.len() as f64;
-    let savings_pct = if total_no_cache == 0.0 { 0.0 } else { total_savings / total_no_cache * 100.0 };
+    let savings_pct = if total_no_cache == 0.0 {
+        0.0
+    } else {
+        total_savings / total_no_cache * 100.0
+    };
 
-    let session_list: Vec<Value> = sessions.iter().map(|s| {
-        json!({
-            "session_id": s.session_id,
-            "model": s.model,
-            "started_at": s.started_at,
-            "num_turns": s.num_turns,
-            "hit_rate": (s.hit_rate * 1000.0).round() / 1000.0,
-            "grade": s.grade,
-            "actual_cost": (s.actual_cost * 10000.0).round() / 10000.0,
-            "savings": (s.savings * 10000.0).round() / 10000.0,
+    let session_list: Vec<Value> = sessions
+        .iter()
+        .map(|s| {
+            json!({
+                "session_id": s.session_id,
+                "model": s.model,
+                "started_at": s.started_at,
+                "num_turns": s.num_turns,
+                "hit_rate": (s.hit_rate * 1000.0).round() / 1000.0,
+                "grade": s.grade,
+                "actual_cost": (s.actual_cost * 10000.0).round() / 10000.0,
+                "savings": (s.savings * 10000.0).round() / 10000.0,
+            })
         })
-    }).collect();
+        .collect();
 
     out(&json!({
         "project": project_dir.display().to_string(),

@@ -1,0 +1,10 @@
+{
+  "hook_event_name": "PreToolUse",
+  "tool": {
+    "name": "shell"
+  },
+  "arguments": {
+    "command": "git status --short"
+  },
+  "cwd": "/repo"
+}

@@ -26,9 +26,9 @@
 use std::path::Path;
 use std::sync::Arc;
 
+use hoangsa_memory_core::{Error, Result};
 use parking_lot::Mutex;
 use rusqlite::{Connection, params};
-use hoangsa_memory_core::{Error, Result};
 
 fn store(e: impl std::fmt::Display) -> Error {
     Error::Store(format!("archive: {e}"))
@@ -388,7 +388,10 @@ mod tests {
         tracker
             .upsert_session("s1", "sample", "memory-arch", 42, "hash-abc")
             .unwrap();
-        assert_eq!(tracker.content_hash("s1").unwrap().as_deref(), Some("hash-abc"));
+        assert_eq!(
+            tracker.content_hash("s1").unwrap().as_deref(),
+            Some("hash-abc")
+        );
         assert_eq!(tracker.content_hash("missing").unwrap(), None);
         assert!(tracker.is_ingested("s1").unwrap());
         assert!(!tracker.is_ingested("s2").unwrap());

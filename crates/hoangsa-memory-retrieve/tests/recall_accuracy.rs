@@ -5,11 +5,11 @@
 //!
 //! Run: `cargo test -p hoangsa-memory-retrieve --test recall_accuracy -- --nocapture`
 
-use tempfile::tempdir;
 use hoangsa_memory_core::{Enforcement, Fact, FactScope, Lesson, MemoryKind, MemoryMeta, Query};
 use hoangsa_memory_parse::LanguageRegistry;
 use hoangsa_memory_retrieve::{Indexer, Retriever};
 use hoangsa_memory_store::{MarkdownStore, StoreRoot};
+use tempfile::tempdir;
 
 struct GoldQuery {
     query: &'static str,

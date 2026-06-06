@@ -367,7 +367,13 @@ impl Language {
         self,
         node: tree_sitter::Node<'_>,
         source: &[u8],
-    ) -> Option<(EventRole, String, Option<String>, Option<String>, Option<String>)> {
+    ) -> Option<(
+        EventRole,
+        String,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+    )> {
         match self.inner {
             #[cfg(any(feature = "lang-javascript", feature = "lang-typescript"))]
             LanguageKind::JavaScript | LanguageKind::TypeScript => js_ts_event(node, source),
@@ -967,10 +973,7 @@ fn string_literal_text(node: tree_sitter::Node<'_>, source: &[u8]) -> Option<Str
 /// dynamic-segment child (template substitutions, Python f-string
 /// interpolations). Returns `None` when the node has no extractable
 /// content or contains a dynamic segment.
-fn collect_string_children(
-    node: tree_sitter::Node<'_>,
-    source: &[u8],
-) -> Option<String> {
+fn collect_string_children(node: tree_sitter::Node<'_>, source: &[u8]) -> Option<String> {
     let mut content = String::new();
     let mut cursor = node.walk();
     let mut had_fragment = false;
@@ -998,8 +1001,13 @@ fn collect_string_children(
         let raw = node.utf8_text(source).ok()?;
         let trimmed = raw.trim();
         let stripped = trimmed
-            .strip_prefix('"').and_then(|s| s.strip_suffix('"'))
-            .or_else(|| trimmed.strip_prefix('\'').and_then(|s| s.strip_suffix('\'')))
+            .strip_prefix('"')
+            .and_then(|s| s.strip_suffix('"'))
+            .or_else(|| {
+                trimmed
+                    .strip_prefix('\'')
+                    .and_then(|s| s.strip_suffix('\''))
+            })
             .or_else(|| trimmed.strip_prefix('`').and_then(|s| s.strip_suffix('`')))?;
         content.push_str(stripped);
     }
@@ -1015,7 +1023,10 @@ fn collect_string_children(
 /// intentionally rejected so the resolver doesn't have to guess.
 fn bare_identifier(node: tree_sitter::Node<'_>, source: &[u8]) -> Option<String> {
     let kind = node.kind();
-    if kind == "identifier" || kind == "property_identifier" || kind == "shorthand_property_identifier" {
+    if kind == "identifier"
+        || kind == "property_identifier"
+        || kind == "shorthand_property_identifier"
+    {
         return node.utf8_text(source).ok().map(str::to_string);
     }
     None
@@ -1025,7 +1036,13 @@ fn bare_identifier(node: tree_sitter::Node<'_>, source: &[u8]) -> Option<String>
 fn js_ts_event(
     node: tree_sitter::Node<'_>,
     source: &[u8],
-) -> Option<(EventRole, String, Option<String>, Option<String>, Option<String>)> {
+) -> Option<(
+    EventRole,
+    String,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+)> {
     if node.kind() != "call_expression" {
         return None;
     }
@@ -1054,7 +1071,13 @@ fn js_ts_event(
 fn python_event(
     node: tree_sitter::Node<'_>,
     source: &[u8],
-) -> Option<(EventRole, String, Option<String>, Option<String>, Option<String>)> {
+) -> Option<(
+    EventRole,
+    String,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+)> {
     if node.kind() != "call" {
         return None;
     }
@@ -1081,7 +1104,13 @@ fn python_event(
 fn rust_event(
     node: tree_sitter::Node<'_>,
     source: &[u8],
-) -> Option<(EventRole, String, Option<String>, Option<String>, Option<String>)> {
+) -> Option<(
+    EventRole,
+    String,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+)> {
     // tree-sitter-rust shapes `tx.send("x", h)` as
     //   call_expression(function: field_expression(value=tx, field=send),
     //                   arguments: (string_literal, identifier))
@@ -1161,11 +1190,17 @@ fn topic_path_expr(node: tree_sitter::Node<'_>, source: &[u8]) -> Option<String>
             // only if the receiver itself is a bare identifier; else bail.
             let text = node.utf8_text(source).ok()?;
             // Conservative: accept only `ident(::|\.)ident` chains.
-            let parts: Vec<&str> = text.split(|c| c == '.' || c == ':').filter(|s| !s.is_empty()).collect();
+            let parts: Vec<&str> = text
+                .split(|c| c == '.' || c == ':')
+                .filter(|s| !s.is_empty())
+                .collect();
             if parts.is_empty() {
                 return None;
             }
-            if !parts.iter().all(|p| p.chars().all(|c| c.is_alphanumeric() || c == '_')) {
+            if !parts
+                .iter()
+                .all(|p| p.chars().all(|c| c.is_alphanumeric() || c == '_'))
+            {
                 return None;
             }
             Some(parts.join("."))
@@ -1206,11 +1241,7 @@ fn python_attribute_path(node: tree_sitter::Node<'_>, source: &[u8]) -> Option<S
 // ----------------------------------------- string-const extractors
 
 #[cfg(any(feature = "lang-javascript", feature = "lang-typescript"))]
-fn js_ts_string_const(
-    node: tree_sitter::Node<'_>,
-    source: &[u8],
-    out: &mut Vec<(String, String)>,
-) {
+fn js_ts_string_const(node: tree_sitter::Node<'_>, source: &[u8], out: &mut Vec<(String, String)>) {
     // tree-sitter-javascript/typescript shape:
     //   lexical_declaration `const`/`let` → variable_declarator(name, value)
     //   variable_declaration `var`        → variable_declarator(name, value)
@@ -1311,11 +1342,7 @@ fn python_string_const(
 }
 
 #[cfg(feature = "lang-rust")]
-fn rust_string_const(
-    node: tree_sitter::Node<'_>,
-    source: &[u8],
-    out: &mut Vec<(String, String)>,
-) {
+fn rust_string_const(node: tree_sitter::Node<'_>, source: &[u8], out: &mut Vec<(String, String)>) {
     let kind = node.kind();
     if kind != "const_item" && kind != "static_item" {
         return;

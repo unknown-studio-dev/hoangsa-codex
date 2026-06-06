@@ -67,7 +67,9 @@ fn cat_filter(ctx: &ProxyContext) -> FilterResult {
     }
     let mut out = head(&ls, 500);
     let remaining = ls.len() - 500;
-    out.push(format!("… ({remaining} more lines — use Read tool for full) …"));
+    out.push(format!(
+        "… ({remaining} more lines — use Read tool for full) …"
+    ));
     FilterResult {
         stdout: Some(join(&out)),
         ..Default::default()

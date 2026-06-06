@@ -8,7 +8,7 @@
 //! entry it did not write, and `uninit` only removes entries it recognises
 //! by the `__hsp` marker embedded in the command string.
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -38,16 +38,12 @@ pub fn install(scope: Scope, cwd: &Path) -> anyhow::Result<PathBuf> {
         .as_object_mut()
         .ok_or_else(|| anyhow::anyhow!("settings.json root is not an object"))?;
 
-    let hooks = settings_obj
-        .entry("hooks")
-        .or_insert_with(|| json!({}));
+    let hooks = settings_obj.entry("hooks").or_insert_with(|| json!({}));
     let hooks_obj = hooks
         .as_object_mut()
         .ok_or_else(|| anyhow::anyhow!("hooks entry is not an object"))?;
 
-    let pre_tool = hooks_obj
-        .entry("PreToolUse")
-        .or_insert_with(|| json!([]));
+    let pre_tool = hooks_obj.entry("PreToolUse").or_insert_with(|| json!([]));
     let pre_tool_arr = pre_tool
         .as_array_mut()
         .ok_or_else(|| anyhow::anyhow!("PreToolUse entry is not an array"))?;

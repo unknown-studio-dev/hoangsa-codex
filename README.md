@@ -56,6 +56,7 @@ curl -fsSL https://github.com/pirumu/hoangsa/releases/latest/download/install.sh
 | `--global` | Install globally for this user (default) — writes to the resolved Claude config dir |
 | `--local` | Install for the current project only — writes to `./.claude/` |
 | `--target claude\|codex\|both` | Select the install target. Default is `claude`; `codex` configures Codex memory MCP, skills, guidance, and hooks. |
+| `--codex-memory-root <path>` | Pin Codex memory to a specific root. Valid only with `--local --target codex` or `--local --target both`; writes only to `<project>/.codex/config.toml`. |
 | `--no-embed` | Skip pre-downloading the `multilingual-e5-small` weights (~118 MB). They will fetch lazily on first `index` / `query` / `archive ingest`. Useful on bandwidth-constrained links. |
 | `--dry-run` | Print actions without writing files — good for auditing |
 | `--help` | Show the installer help |
@@ -140,6 +141,7 @@ custom-prompt shortcuts for the Codex slash menu.
 hoangsa-cli install --target codex --global
 hoangsa-cli install --target codex --local
 hoangsa-cli install --target both --local
+hoangsa-cli install --target codex --local --codex-memory-root "$PWD/.hoangsa/memory"
 ```
 
 Global Codex installs write `~/.codex/config.toml`; local installs write
@@ -158,7 +160,12 @@ RUST_LOG = "info"
 
 Do not set global `HOANGSA_MEMORY_ROOT`; the MCP server resolves the
 right Hoangsa memory project from the Codex session working directory.
-Use a project-local override only when intentionally pinning one project.
+Use `--codex-memory-root <path>` only with a local Codex install when
+intentionally pinning one project. The override is written only to the
+project-local `.codex/config.toml`.
+
+Codex TOML merges preserve unrelated settings and MCP servers semantically
+after parse/write. They do not preserve comments or original formatting.
 
 After installing, start Codex in the project and run `/mcp` to confirm
 that `hoangsa-memory` tools are listed.
@@ -194,6 +201,22 @@ hoangsa-cli codex render menu --arguments "design the billing screen"
 hoangsa-cli codex install-prompts --global
 ```
 
+Codex support is intentionally scoped:
+
+- Codex installs configure memory MCP, memory skills, guidance, and
+  project/global hook files; they do not install Claude slash commands or
+  Claude agent templates.
+- Global Codex installs never write `HOANGSA_MEMORY_ROOT`. Local Codex
+  installs preserve an existing project-local `HOANGSA_MEMORY_ROOT` when
+  `--codex-memory-root` is omitted.
+- Hoangsa UI/API config edits are constrained to validated Hoangsa config
+  files only: global `config.json` or project `.hoangsa/config.json`.
+  Project paths must resolve to existing directories; selected files are
+  rejected before registration, switching, diffing, or applying config.
+- Codex plugin hook bundling is not enabled yet. Direct CLI install is the
+  supported path for Codex hooks until the Codex plugin hook schema is
+  validated against the target Codex release.
+
 ### Codex plugin package
 
 This repo also includes a local Codex plugin package for Desktop/App
@@ -218,7 +241,8 @@ codex plugin add hoangsa-codex@hoangsa-local
 
 Hooks are not bundled through the plugin yet. Use
 `hoangsa-cli install --target codex --local` for full project-local
-Codex wiring, including hooks.
+Codex wiring, including hooks, until Codex plugin hook packaging is
+validated against the target Codex release.
 
 ---
 

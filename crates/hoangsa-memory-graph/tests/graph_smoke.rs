@@ -4,9 +4,9 @@
 
 use std::path::{Path, PathBuf};
 
-use tempfile::tempdir;
 use hoangsa_memory_graph::{BlastDir, Edge, EdgeKind, Graph, Node};
 use hoangsa_memory_store::KvStore;
+use tempfile::tempdir;
 
 async fn new_graph(dir: &Path) -> Graph {
     let kv = KvStore::open(dir.join("graph.redb")).await.unwrap();
@@ -379,7 +379,10 @@ async fn impact_up_picks_up_unresolved_bare_name_edges() {
         .await
         .unwrap();
 
-    let hits = g.impact("hook::cmd_enforce", BlastDir::Up, 3).await.unwrap();
+    let hits = g
+        .impact("hook::cmd_enforce", BlastDir::Up, 3)
+        .await
+        .unwrap();
     let got: Vec<_> = hits.iter().map(|(n, d)| (n.fqn.as_str(), *d)).collect();
     assert_eq!(
         got,

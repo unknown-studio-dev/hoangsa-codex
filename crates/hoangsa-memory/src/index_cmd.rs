@@ -5,10 +5,10 @@ use std::sync::Mutex;
 use std::time::Duration;
 
 use anyhow::Result;
-use indicatif::{ProgressBar, ProgressStyle};
 use hoangsa_memory_parse::LanguageRegistry;
 use hoangsa_memory_retrieve::{IndexProgress, Indexer};
 use hoangsa_memory_store::StoreRoot;
+use indicatif::{ProgressBar, ProgressStyle};
 
 use crate::open_vector_store;
 

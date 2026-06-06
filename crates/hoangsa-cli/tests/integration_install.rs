@@ -915,3 +915,98 @@ fn live_codex_global_installs_command_skills_and_prompt_shortcuts() {
         "second global Codex install should skip unchanged managed prompts; got: {v2}"
     );
 }
+
+#[test]
+fn live_codex_local_writes_explicit_codex_memory_root() {
+    let (home, cwd) = tmp_home_cwd();
+    let staging = tempfile::tempdir().expect("staging tempdir");
+    let templates = seed_memory_skill_templates(staging.path());
+    let install_dir = tempfile::tempdir().expect("install_dir tempdir");
+    let bin_dir = install_dir.path().join("bin");
+    fs::create_dir_all(&bin_dir).expect("mkdir bin");
+    fs::write(bin_dir.join("hoangsa-memory-mcp"), "#!/bin/sh\n").expect("write fake bin");
+    let memory_root = cwd.path().join(".hoangsa/memory");
+
+    let out = run(install_cmd(home.path(), cwd.path())
+        .env("HOANGSA_TEMPLATES_DIR", &templates)
+        .env("HOANGSA_INSTALL_DIR", install_dir.path())
+        .args([
+            "--local",
+            "--target",
+            "codex",
+            "--no-memory",
+            "--codex-memory-root",
+            memory_root.to_str().expect("utf8 memory root"),
+        ]));
+    let v = expect_success_json(&out, "live codex local with memory root");
+    assert_eq!(
+        v["codex_memory_root"],
+        memory_root.to_string_lossy().as_ref()
+    );
+
+    let raw = fs::read_to_string(cwd.path().join(".codex/config.toml")).expect("read Codex config");
+    let parsed: toml::Value = raw.parse().expect("parse Codex TOML");
+    assert_eq!(
+        parsed["mcp_servers"]["hoangsa-memory"]["env"]["HOANGSA_MEMORY_ROOT"].as_str(),
+        Some(memory_root.to_string_lossy().as_ref())
+    );
+}
+
+#[test]
+fn live_both_local_writes_memory_root_only_to_codex_config() {
+    let (home, cwd) = tmp_home_cwd();
+    let staging = tempfile::tempdir().expect("staging tempdir");
+    let templates = seed_memory_skill_templates(staging.path());
+    let install_dir = tempfile::tempdir().expect("install_dir tempdir");
+    let bin_dir = install_dir.path().join("bin");
+    fs::create_dir_all(&bin_dir).expect("mkdir bin");
+    fs::write(bin_dir.join("hoangsa-memory-mcp"), "#!/bin/sh\n").expect("write fake bin");
+    let memory_root = cwd.path().join(".hoangsa/memory");
+
+    let out = run(install_cmd(home.path(), cwd.path())
+        .env("HOANGSA_TEMPLATES_DIR", &templates)
+        .env("HOANGSA_INSTALL_DIR", install_dir.path())
+        .args([
+            "--local",
+            "--target",
+            "both",
+            "--no-memory",
+            "--codex-memory-root",
+            memory_root.to_str().expect("utf8 memory root"),
+        ]));
+    expect_success_json(&out, "live both local with memory root");
+
+    let codex_raw =
+        fs::read_to_string(cwd.path().join(".codex/config.toml")).expect("read Codex config");
+    let codex: toml::Value = codex_raw.parse().expect("parse Codex TOML");
+    assert_eq!(
+        codex["mcp_servers"]["hoangsa-memory"]["env"]["HOANGSA_MEMORY_ROOT"].as_str(),
+        Some(memory_root.to_string_lossy().as_ref())
+    );
+
+    let claude_raw =
+        fs::read_to_string(cwd.path().join(".mcp.json")).expect("read Claude MCP JSON");
+    assert!(
+        !claude_raw.contains("HOANGSA_MEMORY_ROOT"),
+        "Claude MCP JSON must not receive the Codex-only memory root: {claude_raw}"
+    );
+}
+
+#[test]
+fn codex_memory_root_rejected_for_global_install() {
+    let (home, cwd) = tmp_home_cwd();
+    let out = run(install_cmd(home.path(), cwd.path()).args([
+        "--target",
+        "codex",
+        "--global",
+        "--codex-memory-root",
+        "/repo/.hoangsa/memory",
+    ]));
+
+    assert_eq!(exit_code(&out), 2);
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("only valid for local Codex installs"),
+        "stderr should explain rejection; got: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
