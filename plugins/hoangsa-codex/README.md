@@ -3,6 +3,7 @@
 This plugin packages the Codex-facing HOANGSA memory integration:
 
 - memory discipline skills under `skills/`
+- Codex-native HOANGSA command workflow skills under `skills/`
 - a `hoangsa-memory` MCP server entry in `.mcp.json`
 - plugin metadata in `.codex-plugin/plugin.json`
 
@@ -14,6 +15,12 @@ and hook entries.
 Hooks are intentionally not bundled in this plugin yet. Use the direct CLI
 installer for Codex hook setup until plugin hook packaging is validated against
 the target Codex release.
+
+Workflow commands are exposed as Codex skills such as `$hoangsa-menu`,
+`$hoangsa-prepare`, and `$hoangsa-cook`. For slash-menu shortcuts, run the
+direct installer so it can write managed custom prompts into
+`~/.codex/prompts/`; Codex exposes those as `/prompts:hoangsa-menu` style
+commands.
 
 The direct installer preserves Codex TOML settings semantically after
 parse/write, but does not preserve comments or original formatting.

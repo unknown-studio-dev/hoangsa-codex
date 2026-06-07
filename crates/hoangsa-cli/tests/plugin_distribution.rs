@@ -13,6 +13,20 @@ const CODEX_MEMORY_SKILLS: &[&str] = &[
     "memory-cli",
 ];
 
+const CODEX_COMMAND_SKILLS: &[&str] = &[
+    "hoangsa-command-player",
+    "hoangsa-help",
+    "hoangsa-init",
+    "hoangsa-index",
+    "hoangsa-check",
+    "hoangsa-brainstorm",
+    "hoangsa-menu",
+    "hoangsa-prepare",
+    "hoangsa-cook",
+    "hoangsa-taste",
+    "hoangsa-fix",
+];
+
 fn repo_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
@@ -39,6 +53,14 @@ fn codex_plugin_manifest_exposes_skills_and_mcp() {
     assert_eq!(manifest["skills"], "./skills/");
     assert_eq!(manifest["mcpServers"], "./.mcp.json");
     assert_eq!(manifest["author"]["name"], "Unknown Studio");
+    assert!(
+        manifest["interface"]["capabilities"]
+            .as_array()
+            .expect("capabilities array")
+            .iter()
+            .any(|v| v.as_str() == Some("Workflows")),
+        "plugin must advertise workflow capability"
+    );
 
     let mcp = read_json(&plugin_root.join(".mcp.json"));
     let server = &mcp["mcpServers"]["hoangsa-memory"];
@@ -93,6 +115,31 @@ fn codex_plugin_packages_codex_safe_memory_skills() {
         assert!(
             !text.contains(".mcp.json"),
             "{} must not reference Claude MCP config",
+            skill_md.display()
+        );
+    }
+}
+
+#[test]
+fn codex_plugin_packages_command_workflow_skills() {
+    let skills_root = repo_root()
+        .join("plugins")
+        .join("hoangsa-codex")
+        .join("skills");
+
+    for skill in CODEX_COMMAND_SKILLS {
+        let skill_md = skills_root.join(skill).join("SKILL.md");
+        let text = fs::read_to_string(&skill_md).unwrap_or_else(|e| {
+            panic!("read {}: {e}", skill_md.display());
+        });
+        assert!(
+            text.contains("hoangsa-cli codex render") || *skill == "hoangsa-command-player",
+            "{} must route through the Codex command renderer",
+            skill_md.display()
+        );
+        assert!(
+            text.contains("Codex"),
+            "{} must be Codex-specific workflow guidance",
             skill_md.display()
         );
     }

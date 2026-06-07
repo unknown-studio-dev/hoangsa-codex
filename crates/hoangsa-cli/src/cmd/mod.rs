@@ -2,6 +2,7 @@ pub mod addon;
 pub mod bootstrap;
 pub mod budget;
 pub mod cache;
+pub mod codex;
 pub mod commit;
 pub mod config;
 pub mod context;

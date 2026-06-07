@@ -2463,6 +2463,12 @@ pnpm-lock.yaml
         Ok(report)
     }
 
+    pub fn install_codex_command_skills_to(
+        skills_root: &Path,
+    ) -> io::Result<crate::cmd::codex::InstallReport> {
+        crate::cmd::codex::install_command_skills_to(skills_root)
+    }
+
     #[cfg(test)]
     mod tests {
         //! Hermetic unit tests for mode-aware semantics. Every test uses
@@ -3160,9 +3166,30 @@ pub fn cmd_install(args: &[&str]) {
                         "source": src.join("skills").join("hoangsa"),
                     }));
                     actions_json.push(json!({
+                        "action": "install_codex_command_skills",
+                        "target": dst,
+                        "skills": crate::cmd::codex::COMMANDS
+                            .iter()
+                            .map(|c| crate::cmd::codex::skill_name(c.name))
+                            .collect::<Vec<_>>(),
+                    }));
+                    actions_json.push(json!({
                         "action": "sync_codex_guidance",
                         "target": cwd.join("AGENTS.md"),
                     }));
+                    if mode == "global" {
+                        match crate::cmd::codex::prompt_shortcuts_dir() {
+                            Ok(prompts_dir) => actions_json.push(json!({
+                                "action": "install_codex_prompt_shortcuts",
+                                "target": prompts_dir,
+                                "prompts": crate::cmd::codex::COMMANDS
+                                    .iter()
+                                    .map(|c| crate::cmd::codex::prompt_name(c.name))
+                                    .collect::<Vec<_>>(),
+                            })),
+                            Err(e) => warnings.push(e),
+                        }
+                    }
                 }
                 (Err(e), _) => warnings.push(e),
                 (_, Err(e)) => warnings.push(e),
@@ -3262,6 +3289,36 @@ pub fn cmd_install(args: &[&str]) {
                     std::process::exit(1);
                 }
             };
+        let mut codex_command_skills_copied: Vec<PathBuf> = Vec::new();
+        let mut codex_command_skills_skipped: Vec<PathBuf> = Vec::new();
+        if let Some(root) = codex_skills_root.as_ref() {
+            match mode::install_codex_command_skills_to(root) {
+                Ok(r) => {
+                    codex_command_skills_copied = r.copied;
+                    codex_command_skills_skipped = r.skipped;
+                }
+                Err(e) => {
+                    eprintln!("install: install_codex_command_skills: {e}");
+                    std::process::exit(1);
+                }
+            }
+        }
+        let mut codex_prompt_shortcuts_dir: Option<PathBuf> = None;
+        let mut codex_prompt_shortcuts_copied: Vec<PathBuf> = Vec::new();
+        let mut codex_prompt_shortcuts_skipped: Vec<PathBuf> = Vec::new();
+        if mode == "global" {
+            match crate::cmd::codex::install_prompt_shortcuts_global() {
+                Ok(r) => {
+                    codex_prompt_shortcuts_dir = crate::cmd::codex::prompt_shortcuts_dir().ok();
+                    codex_prompt_shortcuts_copied = r.copied;
+                    codex_prompt_shortcuts_skipped = r.skipped;
+                }
+                Err(e) => {
+                    eprintln!("install: install_codex_prompt_shortcuts: {e}");
+                    std::process::exit(1);
+                }
+            }
+        }
 
         let mcp_target = match mode {
             "global" => {
@@ -3335,6 +3392,11 @@ pub fn cmd_install(args: &[&str]) {
             "codex_skills_root": codex_skills_root,
             "codex_skills_copied": codex_skills_copied,
             "codex_skills_skipped_missing": codex_skills_skipped_missing,
+            "codex_command_skills_copied": codex_command_skills_copied,
+            "codex_command_skills_skipped": codex_command_skills_skipped,
+            "codex_prompt_shortcuts_dir": codex_prompt_shortcuts_dir,
+            "codex_prompt_shortcuts_copied": codex_prompt_shortcuts_copied,
+            "codex_prompt_shortcuts_skipped": codex_prompt_shortcuts_skipped,
             "memory_guidance_synced": guidance_synced,
             "memory_guidance_claude_updated": guidance_report.as_ref().map(|r| r.claude_md_updated),
             "memory_guidance_agents_updated": guidance_report.as_ref().map(|r| r.agents_md_updated),
@@ -3564,6 +3626,8 @@ pub fn cmd_install(args: &[&str]) {
     let mut codex_skills_root: Option<PathBuf> = None;
     let mut codex_skills_copied: Vec<PathBuf> = Vec::new();
     let mut codex_skills_skipped_missing: Vec<String> = Vec::new();
+    let mut codex_command_skills_copied: Vec<PathBuf> = Vec::new();
+    let mut codex_command_skills_skipped: Vec<PathBuf> = Vec::new();
     if flags.target.includes_codex() {
         match mode::codex_skills_root(mode, &cwd) {
             Ok(root) => {
@@ -3581,6 +3645,16 @@ pub fn cmd_install(args: &[&str]) {
                     }
                     Err(e) => {
                         eprintln!("install: install_codex_memory_skills: {e}");
+                        std::process::exit(1);
+                    }
+                }
+                match mode::install_codex_command_skills_to(&root) {
+                    Ok(r) => {
+                        codex_command_skills_copied = r.copied;
+                        codex_command_skills_skipped = r.skipped;
+                    }
+                    Err(e) => {
+                        eprintln!("install: install_codex_command_skills: {e}");
                         std::process::exit(1);
                     }
                 }
@@ -3614,6 +3688,23 @@ pub fn cmd_install(args: &[&str]) {
                 codex_mcp_target = Some(mode::codex_local_config_path(&cwd));
             }
             _ => {}
+        }
+    }
+
+    let mut codex_prompt_shortcuts_dir: Option<PathBuf> = None;
+    let mut codex_prompt_shortcuts_copied: Vec<PathBuf> = Vec::new();
+    let mut codex_prompt_shortcuts_skipped: Vec<PathBuf> = Vec::new();
+    if flags.target.includes_codex() && mode == "global" {
+        match crate::cmd::codex::install_prompt_shortcuts_global() {
+            Ok(r) => {
+                codex_prompt_shortcuts_dir = crate::cmd::codex::prompt_shortcuts_dir().ok();
+                codex_prompt_shortcuts_copied = r.copied;
+                codex_prompt_shortcuts_skipped = r.skipped;
+            }
+            Err(e) => {
+                eprintln!("install: install_codex_prompt_shortcuts: {e}");
+                std::process::exit(1);
+            }
         }
     }
 
@@ -3680,6 +3771,11 @@ pub fn cmd_install(args: &[&str]) {
         "codex_skills_root": codex_skills_root,
         "codex_skills_copied": codex_skills_copied,
         "codex_skills_skipped_missing": codex_skills_skipped_missing,
+        "codex_command_skills_copied": codex_command_skills_copied,
+        "codex_command_skills_skipped": codex_command_skills_skipped,
+        "codex_prompt_shortcuts_dir": codex_prompt_shortcuts_dir,
+        "codex_prompt_shortcuts_copied": codex_prompt_shortcuts_copied,
+        "codex_prompt_shortcuts_skipped": codex_prompt_shortcuts_skipped,
         "memory_guidance_synced": guidance_synced,
         "memory_guidance_claude_updated": guidance_report.as_ref().map(|r| r.claude_md_updated),
         "memory_guidance_agents_updated": guidance_report.as_ref().map(|r| r.agents_md_updated),

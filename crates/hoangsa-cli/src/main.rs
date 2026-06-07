@@ -121,6 +121,9 @@ fn main() {
         }
         ("config", "get") => cmd::config::cmd_get(rest.first().copied()),
         ("config", "set") => cmd::config::cmd_set(rest.first().copied(), rest.get(1).copied()),
+        ("codex", "commands") => cmd::codex::cmd_commands(&rest),
+        ("codex", "render") => cmd::codex::cmd_render(&rest),
+        ("codex", "install-prompts") => cmd::codex::cmd_install_prompts(&rest),
         ("context", "pack") => cmd::context::cmd_pack(rest.first().copied(), rest.get(1).copied()),
         ("context", "get") => cmd::context::cmd_get(rest.first().copied(), rest.get(1).copied()),
         ("ctx", _) => cmd::ctx::cmd_ctx(Some(sub), rest.first().copied(), &cwd),

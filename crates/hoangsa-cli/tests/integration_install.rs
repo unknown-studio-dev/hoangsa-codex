@@ -191,7 +191,9 @@ fn dry_run_codex_local_plans_agents_skills_and_guidance_only() {
     assert_eq!(v["target"], "codex");
     let names = action_names(&v);
     assert!(names.contains(&"install_codex_memory_skills".to_string()));
+    assert!(names.contains(&"install_codex_command_skills".to_string()));
     assert!(names.contains(&"sync_codex_guidance".to_string()));
+    assert!(!names.contains(&"install_codex_prompt_shortcuts".to_string()));
     assert!(!names.contains(&"register_mcp_local".to_string()));
     assert!(!names.contains(&"merge_settings".to_string()));
 
@@ -318,13 +320,12 @@ fn dry_run_local_references_cwd_paths() {
 #[test]
 fn dry_run_codex_global_has_no_claude_writes() {
     let (home, cwd) = tmp_home_cwd();
+    let staging = tempfile::tempdir().expect("staging tempdir");
+    let templates = seed_memory_skill_templates(staging.path());
 
-    let out = run(install_cmd(home.path(), cwd.path()).args([
-        "--target",
-        "codex",
-        "--global",
-        "--dry-run",
-    ]));
+    let out = run(install_cmd(home.path(), cwd.path())
+        .env("HOANGSA_TEMPLATES_DIR", &templates)
+        .args(["--target", "codex", "--global", "--dry-run"]));
     let v = expect_success_json(&out, "dry-run codex global");
     assert_eq!(v["target"], "codex", "expected target=codex; got: {v}");
     let actions = v["actions"].as_array().expect("actions array");
@@ -333,6 +334,12 @@ fn dry_run_codex_global_has_no_claude_writes() {
             a.get("action").and_then(|s| s.as_str()) == Some("register_codex_mcp_global")
         }),
         "codex global dry-run must plan Codex MCP config write; got: {v}"
+    );
+    assert!(
+        actions.iter().any(|a| {
+            a.get("action").and_then(|s| s.as_str()) == Some("install_codex_prompt_shortcuts")
+        }),
+        "codex global dry-run must plan prompt shortcut install; got: {v}"
     );
     for p in collect_action_paths(actions) {
         let s = p.display().to_string();
@@ -835,8 +842,30 @@ fn live_codex_local_installs_memory_skills_and_agents_guidance() {
             "missing installed Codex memory skill: {skill}"
         );
     }
+    for skill in [
+        "hoangsa-command-player",
+        "hoangsa-help",
+        "hoangsa-init",
+        "hoangsa-index",
+        "hoangsa-check",
+        "hoangsa-brainstorm",
+        "hoangsa-menu",
+        "hoangsa-prepare",
+        "hoangsa-cook",
+        "hoangsa-taste",
+        "hoangsa-fix",
+    ] {
+        assert!(
+            skills_root.join(skill).join("SKILL.md").exists(),
+            "missing installed Codex command skill: {skill}"
+        );
+    }
     assert!(!skills_root.join("git-flow").exists());
     assert!(!skills_root.join("visual-debug").exists());
+    assert!(
+        !home.path().join(".codex/prompts/hoangsa-menu.md").exists(),
+        "local Codex install must not write global prompt shortcuts"
+    );
 
     let cli_skill = fs::read_to_string(skills_root.join("memory-cli/SKILL.md")).unwrap();
     assert!(cli_skill.contains(".codex/config.toml"));
@@ -849,6 +878,42 @@ fn live_codex_local_installs_memory_skills_and_agents_guidance() {
     assert!(agents.contains("memory_wakeup"));
     assert!(!agents.contains("@.hoangsa/memory-guidance.md"));
     assert!(!cwd.path().join("CLAUDE.md").exists());
+}
+
+#[test]
+fn live_codex_global_installs_command_skills_and_prompt_shortcuts() {
+    let (home, cwd) = tmp_home_cwd();
+    let staging = tempfile::tempdir().expect("staging tempdir");
+    let templates = seed_memory_skill_templates(staging.path());
+
+    let out = run(install_cmd(home.path(), cwd.path())
+        .env("HOANGSA_TEMPLATES_DIR", &templates)
+        .args(["--global", "--target", "codex", "--no-memory"]));
+    let v = expect_success_json(&out, "live codex global");
+    assert_eq!(v["target"], "codex");
+
+    let skills_root = home.path().join(".agents/skills/hoangsa");
+    assert!(skills_root.join("hoangsa-command-player/SKILL.md").exists());
+    let menu_skill = fs::read_to_string(skills_root.join("hoangsa-menu/SKILL.md")).unwrap();
+    assert!(menu_skill.contains("name: hoangsa-menu"));
+    assert!(menu_skill.contains("codex render menu"));
+
+    let prompts_dir = home.path().join(".codex/prompts");
+    let prompt = fs::read_to_string(prompts_dir.join("hoangsa-menu.md"))
+        .expect("global Codex install should write hoangsa-menu prompt");
+    assert!(prompt.contains("$hoangsa-menu"));
+    assert!(prompt.contains("codex render menu"));
+
+    let out2 = run(install_cmd(home.path(), cwd.path())
+        .env("HOANGSA_TEMPLATES_DIR", &templates)
+        .args(["--global", "--target", "codex", "--no-memory"]));
+    let v2 = expect_success_json(&out2, "live codex global second run");
+    assert!(
+        v2["codex_prompt_shortcuts_skipped"]
+            .as_array()
+            .is_some_and(|a| !a.is_empty()),
+        "second global Codex install should skip unchanged managed prompts; got: {v2}"
+    );
 }
 
 #[test]

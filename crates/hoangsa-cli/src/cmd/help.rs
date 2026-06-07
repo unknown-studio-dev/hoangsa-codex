@@ -13,6 +13,7 @@ pub const TOPICS: &[&str] = &[
     "budget",
     "commit",
     "config",
+    "codex",
     "context",
     "ctx",
     "dag",
@@ -113,6 +114,9 @@ Stats & media:
 
 Install & git:
   install [flags]                         Install CLI + hooks (see `install --help`)
+  codex commands [--json]                 List Codex-native HOANGSA commands
+  codex render <command> [--arguments S]  Render a Codex-adapted workflow prompt
+  codex install-prompts [--global]        Install Codex prompt shortcuts
   bootstrap [flags]                       Bootstrap project .hoangsa/ skeleton
   commit "<msg>" --files <f1> <f2> ...    Guarded git commit wrapper
 
@@ -234,7 +238,7 @@ Hooks read a JSON payload on stdin (per Claude/Codex hook contract)
 and emit a decision/approve JSON on stdout."
         }
         "install" => {
-            "install — install HOANGSA for Claude Code and/or Codex memory MCP.
+            "install — install HOANGSA for Claude Code and/or Codex memory/workflows.
 
 Usage:
   hoangsa-cli install [flags]
@@ -247,6 +251,22 @@ Flags:
   --task-manager=<clickup|asana|none>  Pre-select task manager integration
   --no-memory         Skip hoangsa-memory MCP daemon install
   --skip-path-edit    Don't modify shell rc files"
+        }
+        "codex" => {
+            "codex — Codex-native HOANGSA workflow command player.
+
+Usage:
+  hoangsa-cli codex commands [--json]
+  hoangsa-cli codex render <command> [--arguments \"...\"]
+  hoangsa-cli codex install-prompts [--global]
+
+Commands:
+  commands          List supported Codex command workflows
+  render            Print the Codex-adapted prompt for a command
+  install-prompts   Write managed shortcuts to ~/.codex/prompts/
+
+Supported v1 commands:
+  help, init, index, check, brainstorm, menu, prepare, cook, taste, fix"
         }
         "media" => {
             "media — ffmpeg-backed screenshot + video helpers (feature: media).
