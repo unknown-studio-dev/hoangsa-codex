@@ -320,37 +320,125 @@ pub fn cmd_platform_hook(platform: &str, event: &str, handler: Option<&str>, cwd
         (HookPlatform::Claude, _, _) => out(&payload),
         (HookPlatform::Codex, HookEventKind::SessionStart, _) => {
             clear_enforcement_state(&effective_cwd);
-            out(&session_start_response(&effective_cwd));
+            out_codex(event_kind, session_start_response(&effective_cwd));
         }
         (HookPlatform::Codex, HookEventKind::PreToolUse, "lesson-guard") => {
-            out(&lesson_guard_decision(&effective_cwd, &payload));
+            out_codex(event_kind, lesson_guard_decision(&effective_cwd, &payload));
         }
         (HookPlatform::Codex, HookEventKind::PreToolUse, _) => {
-            out(&enforce_decision(&effective_cwd, &payload));
+            out_codex(event_kind, enforce_decision(&effective_cwd, &payload));
         }
         (HookPlatform::Codex, HookEventKind::PostToolUse, _) => {
-            out(&post_enforce_decision(&effective_cwd, &payload));
+            out_codex(event_kind, post_enforce_decision(&effective_cwd, &payload));
         }
         (HookPlatform::Codex, HookEventKind::PreCompact, _) => {
             if normalized.transcript_path.is_some() {
-                out(
-                    &json!({"decision": "approve", "reason": "HOANGSA: Codex transcript archive ingestion is not enabled yet"}),
+                out_codex(
+                    event_kind,
+                    json!({"decision": "approve", "reason": "HOANGSA: Codex transcript archive ingestion is not enabled yet"}),
                 );
             } else {
-                out(
-                    &json!({"decision": "approve", "reason": "HOANGSA: skipped archive ingest; Codex payload did not include transcript_path"}),
+                out_codex(
+                    event_kind,
+                    json!({"decision": "approve", "reason": "HOANGSA: skipped archive ingest; Codex payload did not include transcript_path"}),
                 );
             }
         }
         (HookPlatform::Codex, HookEventKind::Stop, _) => {
             match evaluate_reflect_prompt(&effective_cwd, &normalized.raw.to_string()) {
-                ReflectOutcome::Skip => out(&json!({"decision": "approve"})),
-                ReflectOutcome::Prompt(reason) => out(&json!({
-                    "decision": "block",
-                    "reason": reason,
-                })),
+                ReflectOutcome::Skip => out_codex(event_kind, json!({"decision": "approve"})),
+                ReflectOutcome::Prompt(reason) => out_codex(
+                    event_kind,
+                    json!({
+                        "decision": "block",
+                        "reason": reason,
+                    }),
+                ),
             }
         }
+    }
+}
+
+fn out_codex(event: HookEventKind, legacy: serde_json::Value) {
+    out(&codex_hook_response(event, legacy));
+}
+
+fn codex_hook_response(event: HookEventKind, legacy: serde_json::Value) -> serde_json::Value {
+    match event {
+        HookEventKind::PreToolUse => codex_pre_tool_use_response(&legacy),
+        HookEventKind::PostToolUse => codex_post_tool_use_response(&legacy),
+        HookEventKind::Stop => codex_stop_response(&legacy),
+        HookEventKind::SessionStart | HookEventKind::PreCompact => {
+            if let Some(hso) = legacy.get("hookSpecificOutput") {
+                json!({ "hookSpecificOutput": hso })
+            } else if let Some(reason) = legacy.get("reason").and_then(|v| v.as_str()) {
+                json!({ "systemMessage": reason })
+            } else {
+                json!({})
+            }
+        }
+    }
+}
+
+fn codex_pre_tool_use_response(legacy: &serde_json::Value) -> serde_json::Value {
+    let decision = legacy.get("decision").and_then(|v| v.as_str());
+    let reason = legacy
+        .get("reason")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty());
+
+    if decision == Some("block") {
+        return json!({
+            "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "permissionDecision": "deny",
+                "permissionDecisionReason": reason.unwrap_or("Blocked by HOANGSA hook"),
+            }
+        });
+    }
+
+    if let Some(reason) = reason {
+        return json!({
+            "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "additionalContext": reason,
+            }
+        });
+    }
+
+    json!({})
+}
+
+fn codex_post_tool_use_response(legacy: &serde_json::Value) -> serde_json::Value {
+    let context = legacy
+        .get("hookSpecificOutput")
+        .and_then(|v| v.get("additionalContext"))
+        .and_then(|v| v.as_str())
+        .or_else(|| legacy.get("reason").and_then(|v| v.as_str()))
+        .filter(|s| !s.is_empty());
+
+    if let Some(context) = context {
+        json!({
+            "hookSpecificOutput": {
+                "hookEventName": "PostToolUse",
+                "additionalContext": context,
+            }
+        })
+    } else {
+        json!({})
+    }
+}
+
+fn codex_stop_response(legacy: &serde_json::Value) -> serde_json::Value {
+    match legacy.get("decision").and_then(|v| v.as_str()) {
+        Some("block") => json!({
+            "decision": "block",
+            "reason": legacy
+                .get("reason")
+                .and_then(|v| v.as_str())
+                .unwrap_or("Blocked by HOANGSA hook"),
+        }),
+        _ => json!({ "decision": "approve" }),
     }
 }
 
@@ -2531,6 +2619,55 @@ mod tests {
         assert!(
             events.contains("\"symbol\":\"crate::module::target\""),
             "events: {events}"
+        );
+    }
+
+    #[test]
+    fn codex_pre_tool_use_block_uses_permission_decision() {
+        let response = codex_hook_response(
+            HookEventKind::PreToolUse,
+            json!({"decision": "block", "reason": "must run impact first"}),
+        );
+
+        assert_eq!(
+            response,
+            json!({
+                "hookSpecificOutput": {
+                    "hookEventName": "PreToolUse",
+                    "permissionDecision": "deny",
+                    "permissionDecisionReason": "must run impact first",
+                }
+            })
+        );
+    }
+
+    #[test]
+    fn codex_pre_tool_use_approve_is_empty_response() {
+        let response =
+            codex_hook_response(HookEventKind::PreToolUse, json!({"decision": "approve"}));
+
+        assert_eq!(response, json!({}));
+    }
+
+    #[test]
+    fn codex_post_tool_use_preserves_additional_context() {
+        let response = codex_hook_response(
+            HookEventKind::PostToolUse,
+            json!({
+                "hookSpecificOutput": {
+                    "additionalContext": "recorded impact"
+                }
+            }),
+        );
+
+        assert_eq!(
+            response,
+            json!({
+                "hookSpecificOutput": {
+                    "hookEventName": "PostToolUse",
+                    "additionalContext": "recorded impact",
+                }
+            })
         );
     }
 
