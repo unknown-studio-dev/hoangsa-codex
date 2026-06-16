@@ -468,11 +468,76 @@ prefetch_embed_model() {
         || info "prefetch failed — weights will download on first use"
 }
 
+project_slug_for_cwd() {
+    _path=$(pwd -P 2>/dev/null || pwd)
+    _base=$(basename "$_path")
+    _parent=$(basename "$(dirname "$_path")")
+    printf '%s-%s' "$_parent" "$_base" \
+        | tr '[:upper:]' '[:lower:]' \
+        | sed -E 's/[^a-z0-9]+/-/g; s/^-+//; s/-+$//'
+}
+
+write_vector_store_disabled_config() {
+    _slug=$(project_slug_for_cwd)
+    if [ -z "$_slug" ]; then
+        info "--no-embed — could not derive project slug; skipping vector_store config"
+        return 0
+    fi
+    _root="$HOME/.hoangsa/memory/projects/$_slug"
+    _config="$_root/config.toml"
+
+    if [ "$DRY_RUN" -eq 1 ]; then
+        info "dry-run: would set [vector_store] enabled = false in $_config"
+        return 0
+    fi
+
+    mkdir -p "$_root" || {
+        info "--no-embed — could not create $_root; skipping vector_store config"
+        return 0
+    }
+
+    if [ ! -f "$_config" ]; then
+        {
+            printf '[vector_store]\n'
+            printf 'enabled = false\n'
+        } > "$_config"
+        info "--no-embed — wrote $_config with vector_store disabled"
+        return 0
+    fi
+
+    awk '
+        BEGIN { in_vs = 0; seen_vs = 0; wrote_enabled = 0 }
+        /^\[vector_store\]$/ {
+            if (seen_vs && !wrote_enabled) print "enabled = false"
+            in_vs = 1; seen_vs = 1; wrote_enabled = 0; print; next
+        }
+        /^\[/ {
+            if (in_vs && !wrote_enabled) print "enabled = false"
+            in_vs = 0; print; next
+        }
+        in_vs && /^[[:space:]]*enabled[[:space:]]*=/ {
+            print "enabled = false"; wrote_enabled = 1; next
+        }
+        { print }
+        END {
+            if (!seen_vs) {
+                print ""
+                print "[vector_store]"
+                print "enabled = false"
+            } else if (in_vs && !wrote_enabled) {
+                print "enabled = false"
+            }
+        }
+    ' "$_config" > "$_config.tmp" && mv "$_config.tmp" "$_config"
+    info "--no-embed — ensured vector_store disabled in $_config"
+}
+
 section "vector store"
 if [ "$SKIP_EMBED" -eq 0 ]; then
     prefetch_embed_model
 else
     info "--no-embed — skipping fastembed model pre-download"
+    write_vector_store_disabled_config
 fi
 
 # --- Hand off to the CLI ----------------------------------------------------
