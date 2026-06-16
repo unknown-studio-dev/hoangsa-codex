@@ -853,7 +853,15 @@ fn live_codex_local_installs_memory_skills_and_agents_guidance() {
         "hoangsa-prepare",
         "hoangsa-cook",
         "hoangsa-taste",
+        "hoangsa-plate",
+        "hoangsa-ship",
+        "hoangsa-serve",
         "hoangsa-fix",
+        "hoangsa-audit",
+        "hoangsa-research",
+        "hoangsa-rule",
+        "hoangsa-addon",
+        "hoangsa-update",
     ] {
         assert!(
             skills_root.join(skill).join("SKILL.md").exists(),
@@ -894,15 +902,54 @@ fn live_codex_global_installs_command_skills_and_prompt_shortcuts() {
 
     let skills_root = home.path().join(".agents/skills/hoangsa");
     assert!(skills_root.join("hoangsa-command-player/SKILL.md").exists());
-    let menu_skill = fs::read_to_string(skills_root.join("hoangsa-menu/SKILL.md")).unwrap();
-    assert!(menu_skill.contains("name: hoangsa-menu"));
-    assert!(menu_skill.contains("codex render menu"));
+    for command in ["menu", "plate", "ship", "audit"] {
+        let skill = fs::read_to_string(
+            skills_root
+                .join(format!("hoangsa-{command}"))
+                .join("SKILL.md"),
+        )
+        .unwrap_or_else(|e| panic!("read installed command skill {command}: {e}"));
+        assert!(skill.contains(&format!("name: hoangsa-{command}")));
+        assert!(skill.contains(&format!("codex render {command}")));
+    }
+
+    let command_player =
+        fs::read_to_string(skills_root.join("hoangsa-command-player/SKILL.md")).unwrap();
+    assert!(command_player.contains("Before declaring subagents unavailable"));
+
+    for (command, guard) in [
+        (
+            "brainstorm",
+            "Brainstorm may delegate to the research workflow",
+        ),
+        (
+            "cook",
+            "Cook requires one Codex subagent worker per plan task",
+        ),
+        ("ship", "Ship requires parallel Codex subagents"),
+        ("fix", "Fix uses Codex subagents"),
+        ("audit", "Audit requires parallel Codex subagents"),
+        ("research", "Research uses parallel Codex subagents"),
+    ] {
+        let skill = fs::read_to_string(
+            skills_root
+                .join(format!("hoangsa-{command}"))
+                .join("SKILL.md"),
+        )
+        .unwrap_or_else(|e| panic!("read installed guarded skill {command}: {e}"));
+        assert!(
+            skill.contains(guard),
+            "missing subagent guard `{guard}` in generated hoangsa-{command}"
+        );
+    }
 
     let prompts_dir = home.path().join(".codex/prompts");
-    let prompt = fs::read_to_string(prompts_dir.join("hoangsa-menu.md"))
-        .expect("global Codex install should write hoangsa-menu prompt");
-    assert!(prompt.contains("$hoangsa-menu"));
-    assert!(prompt.contains("codex render menu"));
+    for command in ["menu", "plate", "ship", "audit"] {
+        let prompt = fs::read_to_string(prompts_dir.join(format!("hoangsa-{command}.md")))
+            .unwrap_or_else(|e| panic!("read installed command prompt {command}: {e}"));
+        assert!(prompt.contains(&format!("$hoangsa-{command}")));
+        assert!(prompt.contains(&format!("codex render {command}")));
+    }
 
     let out2 = run(install_cmd(home.path(), cwd.path())
         .env("HOANGSA_TEMPLATES_DIR", &templates)
