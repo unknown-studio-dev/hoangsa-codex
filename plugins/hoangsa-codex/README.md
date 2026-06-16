@@ -17,8 +17,8 @@ installer for Codex hook setup until plugin hook packaging is validated against
 the target Codex release.
 
 Workflow commands are exposed as Codex skills such as `$hoangsa-menu`,
-`$hoangsa-prepare`, and `$hoangsa-cook`. For slash-menu shortcuts, run the
-direct installer so it can write managed custom prompts into
+`$hoangsa-plate`, `$hoangsa-ship`, and `$hoangsa-audit`. For slash-menu
+shortcuts, run the direct installer so it can write managed custom prompts into
 `~/.codex/prompts/`; Codex exposes those as `/prompts:hoangsa-menu` style
 commands.
 

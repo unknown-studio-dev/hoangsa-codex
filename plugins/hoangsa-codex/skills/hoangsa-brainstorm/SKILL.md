@@ -19,3 +19,10 @@ hoangsa-cli codex render brainstorm --arguments "$ARGUMENTS"
 If `$ARGUMENTS` is unavailable, pass an empty string. Follow the rendered
 workflow exactly, using Codex-native questions, subagents, MCP tools, sandbox,
 approvals, and hooks.
+
+Brainstorm may delegate to the research workflow for non-trivial or external
+research. When the rendered workflow triggers full research, apply the
+`$hoangsa-research` subagent discovery/blocker rules before continuing. If
+research agents are required but unavailable after discovery, stop and report
+brainstorm as blocked instead of doing an unapproved single-thread research
+fallback.

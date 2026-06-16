@@ -88,10 +88,58 @@ pub const COMMANDS: &[CodexCommand] = &[
         workflow_body: include_str!("../../../../templates/workflows/taste.md"),
     },
     CodexCommand {
+        name: "plate",
+        description: "Stage changed files and commit with a conventional commit message.",
+        workflow: "plate",
+        workflow_body: include_str!("../../../../templates/workflows/plate.md"),
+    },
+    CodexCommand {
+        name: "ship",
+        description: "Review code and security, then push or create a PR.",
+        workflow: "ship",
+        workflow_body: include_str!("../../../../templates/workflows/ship.md"),
+    },
+    CodexCommand {
+        name: "serve",
+        description: "Sync task status and reports with connected task managers.",
+        workflow: "serve",
+        workflow_body: include_str!("../../../../templates/workflows/serve.md"),
+    },
+    CodexCommand {
         name: "fix",
         description: "Trace a bug to root cause, make a minimal fix, and verify it.",
         workflow: "fix",
         workflow_body: include_str!("../../../../templates/workflows/fix.md"),
+    },
+    CodexCommand {
+        name: "audit",
+        description: "Audit the codebase for security, debt, coverage, performance, and maintainability issues.",
+        workflow: "audit",
+        workflow_body: include_str!("../../../../templates/workflows/audit.md"),
+    },
+    CodexCommand {
+        name: "research",
+        description: "Research a topic with codebase analysis and external context, producing RESEARCH.md.",
+        workflow: "research",
+        workflow_body: include_str!("../../../../templates/workflows/research.md"),
+    },
+    CodexCommand {
+        name: "rule",
+        description: "Add, remove, or list project enforcement rules.",
+        workflow: "rule",
+        workflow_body: include_str!("../../../../templates/workflows/rule.md"),
+    },
+    CodexCommand {
+        name: "addon",
+        description: "List, add, or remove framework-specific worker rule addons.",
+        workflow: "addon",
+        workflow_body: include_str!("../../../../templates/workflows/addon.md"),
+    },
+    CodexCommand {
+        name: "update",
+        description: "Upgrade HOANGSA to the latest version with changelog review.",
+        workflow: "update",
+        workflow_body: include_str!("../../../../templates/workflows/update.md"),
     },
 ];
 
@@ -204,6 +252,7 @@ fn adapt_workflow_for_codex(raw: &str) -> String {
 
 fn command_skill_text(cmd: &CodexCommand) -> String {
     let name = skill_name(cmd.name);
+    let guard = command_subagent_guard(cmd.name);
     format!(
         r#"---
 name: {name}
@@ -224,12 +273,83 @@ hoangsa-cli codex render {command} --arguments "$ARGUMENTS"
 If `$ARGUMENTS` is unavailable, pass an empty string. Follow the rendered
 workflow exactly, using Codex-native questions, subagents, MCP tools, sandbox,
 approvals, and hooks.
+{guard}
 "#,
         name = name,
         command = cmd.name,
         prompt = prompt_name(cmd.name),
-        description = cmd.description
+        description = cmd.description,
+        guard = guard,
     )
+}
+
+fn command_subagent_guard(command: &str) -> &'static str {
+    match command {
+        "cook" => {
+            r#"
+Cook requires one Codex subagent worker per plan task and fresh context per
+worker. Before Step 3 of the rendered workflow, discover the Codex multi-agent
+spawn tool if it is not already visible. If no spawn tool is available after
+discovery, stop and report cook as blocked; do not implement plan tasks in the
+orchestrator thread unless the user explicitly instructs a direct-execution
+fallback.
+"#
+        }
+        "ship" => {
+            r#"
+Ship requires parallel Codex subagents for the code review and security review
+gate before push/PR actions. Before the parallel review step, discover the Codex
+multi-agent spawn tool if it is not already visible. If no spawn tool is
+available after discovery, stop and report ship as blocked; do not replace the
+required review/security workers with local orchestrator review unless the user
+explicitly instructs that fallback.
+"#
+        }
+        "fix" => {
+            r#"
+Fix uses Codex subagents for cross-layer tracing when triggered, for each
+implementation fix task, and for simplify passes when enabled. Before any
+rendered fix step that spawns a research/worker/simplify agent, discover the
+Codex multi-agent spawn tool if it is not already visible. If a required fix
+worker cannot be spawned after discovery, stop and report fix as blocked; do not
+implement the fix directly in the orchestrator thread unless the user explicitly
+instructs that fallback. If an optional simplify pass cannot spawn, follow the
+rendered simplify failure recovery behavior and continue only when the workflow
+marks simplify as non-blocking.
+"#
+        }
+        "research" => {
+            r#"
+Research uses parallel Codex subagents for codebase research when the rendered
+workflow enters the codebase-research phase. Before that phase, discover the
+Codex multi-agent spawn tool if it is not already visible. If no spawn tool is
+available after discovery and the requested research scope requires codebase
+agents, stop and report research as blocked; do not silently replace the
+parallel research agents with single-thread orchestrator research unless the
+user explicitly instructs that fallback.
+"#
+        }
+        "audit" => {
+            r#"
+Audit requires parallel Codex subagents for dimension scanning. Before the
+parallel scanning step, discover the Codex multi-agent spawn tool if it is not
+already visible. If no spawn tool is available after discovery, stop and report
+audit as blocked; do not perform the dimension scan sequentially in the
+orchestrator thread unless the user explicitly instructs that fallback.
+"#
+        }
+        "brainstorm" => {
+            r#"
+Brainstorm may delegate to the research workflow for non-trivial or external
+research. When the rendered workflow triggers full research, apply the
+`$hoangsa-research` subagent discovery/blocker rules before continuing. If
+research agents are required but unavailable after discovery, stop and report
+brainstorm as blocked instead of doing an unapproved single-thread research
+fallback.
+"#
+        }
+        _ => "",
+    }
 }
 
 fn command_player_skill_text() -> &'static str {
@@ -248,7 +368,13 @@ Use this skill as the adapter between Claude-shaped HOANGSA workflows and Codex.
 3. Never read `.claude/hoangsa` or `~/.claude/hoangsa` in Codex mode.
 4. Use available `memory_*` MCP tools before non-trivial edits or factual codebase claims.
 5. Convert Claude `AskUserQuestion` steps into concise Codex user questions.
-6. Convert Claude `Task` orchestration into explicit Codex subagent instructions; only spawn subagents when appropriate for the active session.
+6. Convert Claude `Task` orchestration into explicit Codex subagent instructions.
+   Before declaring subagents unavailable, search for Codex multi-agent tooling
+   (for example `multi_agent_v1.spawn_agent`) with the available tool discovery
+   mechanism. If the rendered workflow explicitly requires workers/subagents and
+   no spawn tool is available after discovery, stop and report a blocker instead
+   of executing the worker task directly. Only use direct execution when the user
+   explicitly overrides the worker requirement.
 7. Respect Codex sandboxing, approvals, hooks, skills, and AGENTS.md instructions.
 8. Treat custom prompts as shortcuts only. The skill workflow is canonical.
 "#

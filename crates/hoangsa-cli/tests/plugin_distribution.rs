@@ -24,7 +24,15 @@ const CODEX_COMMAND_SKILLS: &[&str] = &[
     "hoangsa-prepare",
     "hoangsa-cook",
     "hoangsa-taste",
+    "hoangsa-plate",
+    "hoangsa-ship",
+    "hoangsa-serve",
     "hoangsa-fix",
+    "hoangsa-audit",
+    "hoangsa-research",
+    "hoangsa-rule",
+    "hoangsa-addon",
+    "hoangsa-update",
 ];
 
 fn repo_root() -> PathBuf {
@@ -140,6 +148,36 @@ fn codex_plugin_packages_command_workflow_skills() {
         assert!(
             text.contains("Codex"),
             "{} must be Codex-specific workflow guidance",
+            skill_md.display()
+        );
+    }
+
+    let command_player =
+        fs::read_to_string(skills_root.join("hoangsa-command-player").join("SKILL.md"))
+            .expect("read command player skill");
+    assert!(command_player.contains("Before declaring subagents unavailable"));
+
+    for (skill, guard) in [
+        (
+            "hoangsa-brainstorm",
+            "Brainstorm may delegate to the research workflow",
+        ),
+        (
+            "hoangsa-cook",
+            "Cook requires one Codex subagent worker per plan task",
+        ),
+        ("hoangsa-ship", "Ship requires parallel Codex subagents"),
+        ("hoangsa-fix", "Fix uses Codex subagents"),
+        ("hoangsa-audit", "Audit requires parallel Codex subagents"),
+        ("hoangsa-research", "Research uses parallel Codex subagents"),
+    ] {
+        let skill_md = skills_root.join(skill).join("SKILL.md");
+        let text = fs::read_to_string(&skill_md).unwrap_or_else(|e| {
+            panic!("read {}: {e}", skill_md.display());
+        });
+        assert!(
+            text.contains(guard),
+            "{} must include subagent guard `{guard}`",
             skill_md.display()
         );
     }
