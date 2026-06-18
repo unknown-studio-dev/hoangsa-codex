@@ -818,6 +818,11 @@ fn live_codex_local_installs_memory_skills_and_agents_guidance() {
     let bin_dir = install_dir.path().join("bin");
     fs::create_dir_all(&bin_dir).expect("mkdir bin");
     fs::write(bin_dir.join("hoangsa-memory-mcp"), "#!/bin/sh\n").expect("write fake bin");
+    fs::write(
+        cwd.path().join("AGENTS.md"),
+        "# Project\n\n<!-- thoth:managed:start -->\nthoth_recall({query})\nthoth_impact({fqn})\n<!-- thoth:managed:end -->\n\nKeep user guidance.\n",
+    )
+    .expect("seed legacy AGENTS.md");
 
     let out = run(install_cmd(home.path(), cwd.path())
         .env("HOANGSA_TEMPLATES_DIR", &templates)
@@ -882,8 +887,13 @@ fn live_codex_local_installs_memory_skills_and_agents_guidance() {
     assert!(!cli_skill.contains("~/.claude/skills"));
 
     let agents = fs::read_to_string(cwd.path().join("AGENTS.md")).unwrap();
+    assert!(agents.contains("# Project"));
+    assert!(agents.contains("Keep user guidance."));
     assert!(agents.contains("## Hoangsa Memory"));
     assert!(agents.contains("memory_wakeup"));
+    assert!(!agents.contains("thoth:managed"));
+    assert!(!agents.contains("thoth_recall"));
+    assert!(!agents.contains("thoth_impact"));
     assert!(!agents.contains("@.hoangsa/memory-guidance.md"));
     assert!(!cwd.path().join("CLAUDE.md").exists());
 }
