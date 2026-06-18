@@ -1924,6 +1924,7 @@ pnpm-lock.yaml
     /// for first-run detection without committing us to a specific rule
     /// inventory here.
     pub const DEFAULT_RULES_JSON: &str = "{\n  \"version\": \"1.0\",\n  \"rules\": []\n}\n";
+    const LEGACY_THOTH_MCP_KEYS: &[&str] = &["thoth", "thoth-memory"];
 
     /// Path to Claude Code's global MCP config file (`.claude.json`).
     /// Delegates to the crate-level `claude_json_path` helper so the same
@@ -1999,6 +2000,18 @@ pnpm-lock.yaml
             .expect("table inserted above")
     }
 
+    fn remove_legacy_thoth_toml_entries(servers: &mut Table) {
+        for key in LEGACY_THOTH_MCP_KEYS {
+            servers.remove(*key);
+        }
+    }
+
+    fn remove_legacy_thoth_json_entries(servers: &mut serde_json::Map<String, Value>) {
+        for key in LEGACY_THOTH_MCP_KEYS {
+            servers.remove(*key);
+        }
+    }
+
     fn build_codex_mcp_entry(
         command: &Path,
         existing: Option<&TomlValue>,
@@ -2049,6 +2062,7 @@ pnpm-lock.yaml
     ) -> io::Result<()> {
         let mut root = load_toml_table(config_path)?;
         let servers = get_or_create_table(&mut root, "mcp_servers");
+        remove_legacy_thoth_toml_entries(servers);
         let existing = servers.get("hoangsa-memory").cloned();
         servers.insert(
             "hoangsa-memory".to_string(),
@@ -2180,6 +2194,7 @@ pnpm-lock.yaml
             .as_object_mut()
             .expect("mcpServers normalized to object");
 
+        remove_legacy_thoth_json_entries(servers);
         let existing = servers.get("hoangsa-memory").cloned();
         servers.insert(
             "hoangsa-memory".into(),
@@ -2581,6 +2596,41 @@ pnpm-lock.yaml
         }
 
         #[test]
+        fn claude_mcp_merge_removes_legacy_thoth_servers() {
+            let home = tempdir().expect("home tempdir");
+            let claude_json = home.path().join(".claude.json");
+
+            let seed = json!({
+                "mcpServers": {
+                    "existing": { "command": "x", "args": [] },
+                    "thoth": { "command": "/old/bin/thoth" },
+                    "thoth-memory": { "command": "/old/bin/thoth-memory" }
+                }
+            });
+            fs::write(
+                &claude_json,
+                serde_json::to_string_pretty(&seed).expect("encode"),
+            )
+            .expect("write seed");
+
+            let bin = home.path().join("fake-memory-mcp");
+            fs::write(&bin, "#!/bin/sh\n").expect("write fake bin");
+
+            register_mcp_global_to(&claude_json, &bin).expect("register");
+
+            let raw = fs::read_to_string(&claude_json).expect("read back");
+            let back: Value = serde_json::from_str(&raw).expect("parse back");
+            let servers = back
+                .get("mcpServers")
+                .and_then(|s| s.as_object())
+                .expect("mcpServers present");
+            assert!(servers.contains_key("existing"));
+            assert!(servers.contains_key("hoangsa-memory"));
+            assert!(!servers.contains_key("thoth"));
+            assert!(!servers.contains_key("thoth-memory"));
+        }
+
+        #[test]
         fn local_missing_mcp_bin_exits_3() {
             let cwd = tempdir().expect("cwd tempdir");
             let home = tempdir().expect("home tempdir");
@@ -2682,6 +2732,38 @@ HOANGSA_MEMORY_ROOT = "/should/not/be/global"
                 hoangsa["env"].get("HOANGSA_MEMORY_ROOT").is_none(),
                 "global Codex config must not pin every session to one memory root"
             );
+        }
+
+        #[test]
+        fn codex_merge_removes_legacy_thoth_servers() {
+            let home = tempdir().expect("home tempdir");
+            let config = home.path().join(".codex").join("config.toml");
+            fs::create_dir_all(config.parent().expect("parent")).expect("mkdir");
+            fs::write(
+                &config,
+                r#"
+[mcp_servers.keep-me]
+command = "/usr/local/bin/keep"
+
+[mcp_servers.thoth]
+command = "/old/bin/thoth-mcp"
+
+[mcp_servers.thoth-memory]
+command = "/old/bin/thoth-memory"
+"#,
+            )
+            .expect("seed codex config");
+
+            let bin = home.path().join("bin").join("hoangsa-memory-mcp");
+            register_codex_mcp_global_to(&config, &bin).expect("register");
+
+            let raw = fs::read_to_string(&config).expect("read back");
+            let back: TomlValue = raw.parse().expect("parse toml");
+            let servers = back["mcp_servers"].as_table().expect("mcp_servers");
+            assert!(servers.contains_key("hoangsa-memory"));
+            assert!(servers.contains_key("keep-me"));
+            assert!(!servers.contains_key("thoth"));
+            assert!(!servers.contains_key("thoth-memory"));
         }
 
         #[test]

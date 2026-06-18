@@ -13,6 +13,8 @@ use std::path::Path;
 
 const START_MARKER: &str = "<!-- hoangsa-memory-start -->";
 const END_MARKER: &str = "<!-- hoangsa-memory-end -->";
+const LEGACY_THOTH_START_MARKER: &str = "<!-- thoth:managed:start -->";
+const LEGACY_THOTH_END_MARKER: &str = "<!-- thoth:managed:end -->";
 const GUIDANCE_REL_PATH: &str = ".hoangsa/memory-guidance.md";
 
 /// Body written to `.hoangsa/memory-guidance.md`. Kept intentionally short:
@@ -120,6 +122,30 @@ recall can verify them.\n\
     )
 }
 
+fn remove_marker_blocks(mut content: String, start_marker: &str, end_marker: &str) -> String {
+    while let Some(start) = content.find(start_marker) {
+        let Some(end_rel) = content[start..].find(end_marker) else {
+            break;
+        };
+        let end = start + end_rel + end_marker.len();
+        let mut remove_start = start;
+        let mut remove_end = end;
+
+        if remove_start > 0 && content.as_bytes()[remove_start - 1] == b'\n' {
+            remove_start -= 1;
+        }
+        while remove_end < content.len() && content.as_bytes()[remove_end] == b'\n' {
+            remove_end += 1;
+        }
+
+        content.replace_range(remove_start..remove_end, "");
+        if !content.is_empty() && !content.ends_with('\n') {
+            content.push('\n');
+        }
+    }
+    content
+}
+
 /// Write or replace the marker block in `path`. Creates the file when
 /// missing; preserves anything outside the markers. Returns true if the
 /// on-disk content actually changed.
@@ -129,16 +155,33 @@ fn upsert_marker_block(path: &Path, block: &str) -> std::io::Result<bool> {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
         Err(e) => return Err(e),
     };
+    let existing_without_legacy = remove_marker_blocks(
+        existing.clone(),
+        LEGACY_THOTH_START_MARKER,
+        LEGACY_THOTH_END_MARKER,
+    );
 
-    let updated = match (existing.find(START_MARKER), existing.find(END_MARKER)) {
+    let updated = match (
+        existing_without_legacy.find(START_MARKER),
+        existing_without_legacy.find(END_MARKER),
+    ) {
         (Some(start), Some(end)) if end > start => {
             let end_of_end = end + END_MARKER.len();
-            format!("{}{}{}", &existing[..start], block, &existing[end_of_end..])
+            format!(
+                "{}{}{}",
+                &existing_without_legacy[..start],
+                block,
+                &existing_without_legacy[end_of_end..]
+            )
         }
-        _ if existing.is_empty() => format!("{block}\n"),
-        _ if existing.ends_with("\n\n") => format!("{existing}{block}\n"),
-        _ if existing.ends_with('\n') => format!("{existing}\n{block}\n"),
-        _ => format!("{existing}\n\n{block}\n"),
+        _ if existing_without_legacy.is_empty() => format!("{block}\n"),
+        _ if existing_without_legacy.ends_with("\n\n") => {
+            format!("{existing_without_legacy}{block}\n")
+        }
+        _ if existing_without_legacy.ends_with('\n') => {
+            format!("{existing_without_legacy}\n{block}\n")
+        }
+        _ => format!("{existing_without_legacy}\n\n{block}\n"),
     };
 
     if updated == existing {
@@ -283,5 +326,26 @@ mod tests {
         cmd_sync(dir.path().to_str().unwrap()).unwrap();
         let second = fs::read_to_string(&claude_path).unwrap();
         assert_eq!(first, second, "second sync must be a no-op");
+    }
+
+    #[test]
+    fn codex_sync_removes_legacy_thoth_block() {
+        let dir = TempDir::new().unwrap();
+        let agents_path = dir.path().join("AGENTS.md");
+        fs::write(
+            &agents_path,
+            "# Project\n\n<!-- thoth:managed:start -->\nthoth_recall({query})\nthoth_impact({fqn})\n<!-- thoth:managed:end -->\n\nKeep this rule.\n",
+        )
+        .unwrap();
+
+        sync_for_target(dir.path(), GuidanceTarget::Codex).unwrap();
+
+        let agents = fs::read_to_string(&agents_path).unwrap();
+        assert!(agents.contains("# Project"));
+        assert!(agents.contains("Keep this rule."));
+        assert!(agents.contains("## Hoangsa Memory"));
+        assert!(!agents.contains("thoth:managed"));
+        assert!(!agents.contains("thoth_recall"));
+        assert!(!agents.contains("thoth_impact"));
     }
 }
